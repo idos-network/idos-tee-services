@@ -1,8 +1,8 @@
+import { Binary } from "mongodb";
 import { describe, expect, it, vi } from "vitest";
 import { armBody } from "./helpers.ts";
 
-// In-memory Mongo + a ClientEncryption whose "ciphertext" is a tagged JSON wrapper,
-// so a test can tell encrypted fields from plaintext ones and swap blobs between records.
+// In-memory Mongo with the real Binary, so blobs can be inspected and swapped between records.
 const h = vi.hoisted(() => {
   const docs = new Map<string, Record<string, unknown>>();
   return {
@@ -20,22 +20,11 @@ const h = vi.hoisted(() => {
   };
 });
 
-vi.mock("@aws-sdk/credential-provider-node", () => ({ defaultProvider: () => async () => ({}) }));
-
-vi.mock("mongodb", () => ({
+vi.mock("mongodb", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("mongodb")>()),
   MongoClient: class {
     connect = async () => {};
-    db = () => ({
-      listCollections: () => ({ toArray: async () => [{ name: "__keyVault" }] }),
-      createCollection: async () => {},
-      collection: () => h.collection,
-    });
-  },
-  ClientEncryption: class {
-    getKeyByAltName = async () => ({ _id: "data-key-id" });
-    createDataKey = async () => "data-key-id";
-    encrypt = async (value: string) => ({ enc: value });
-    decrypt = async (value: { enc: string }) => value.enc;
+    db = () => ({ collection: () => h.collection });
   },
 }));
 
@@ -51,6 +40,7 @@ describe("armed records in Mongo", () => {
     expect(dataEnc).toBeDefined();
     expect(Object.keys(plaintext).sort()).toEqual(["armedId", "createdAt"]);
     expect(JSON.stringify(plaintext)).not.toContain("iron-secret");
+    expect(Buffer.from((dataEnc as Binary).value()).toString()).not.toContain("iron-secret");
   });
 
   it("round-trips the armed record", async () => {
@@ -70,6 +60,18 @@ describe("armed records in Mongo", () => {
     attacker.dataEnc = victim.dataEnc;
 
     await expect(getArmed("attacker")).rejects.toThrow(/armedId/);
+  });
+
+  it("rejects a tampered blob", async () => {
+    await storeArmed("id-4", armBody());
+
+    const doc = h.docs.get("id-4");
+    if (!doc) throw new Error("record missing");
+    const bytes = Buffer.from((doc.dataEnc as Binary).value());
+    bytes.writeUInt8(bytes.readUInt8(20) ^ 1, 20);
+    doc.dataEnc = new Binary(bytes);
+
+    await expect(getArmed("id-4")).rejects.toThrow(/authenticate/);
   });
 
   it("deletes a record and reports whether it existed", async () => {

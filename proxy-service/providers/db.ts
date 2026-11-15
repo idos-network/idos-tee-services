@@ -1,8 +1,7 @@
-import { defaultProvider } from "@aws-sdk/credential-provider-node";
-import { createFle } from "@idos/tee-common/fle.ts";
+import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
 import { traced } from "@idos/tee-common/telemetry.ts";
-import { type Binary, ClientEncryption, type Db, MongoClient } from "mongodb";
-import { DB_ARMED_COLLECTION, DB_NAME, FLE_KEY_ALIAS, FLE_MASTER_KEY, MONGO_URI } from "../env.ts";
+import { Binary, type Db, MongoClient } from "mongodb";
+import { DB_ARMED_COLLECTION, DB_NAME, FLE_MASTER_KEY, MONGO_URI } from "../env.ts";
 import type { ArmRequest } from "../utils/dto.ts";
 
 let db: Db | null = null;
@@ -12,16 +11,33 @@ const client = new MongoClient(MONGO_URI, {
   wtimeoutMS: 2500,
 });
 
-const fle = createFle({
-  client,
-  ClientEncryption,
-  // unused: the vault only ever holds `local` data keys, nothing to rewrap from `aws`
-  credentialsProvider: defaultProvider(),
-  keyDb: "proxyEncryption",
-  keyAlias: FLE_KEY_ALIAS,
-  // decrypted with attestation by scripts/run.ash, see localMasterKey in tee-common/fle.ts
-  localMasterKey: Buffer.from(FLE_MASTER_KEY, "base64"),
-});
+// AES-256-GCM key derived from the master key, which scripts/run.ash decrypts with attestation.
+const DATA_KEY = Buffer.from(
+  hkdfSync("sha256", Buffer.from(FLE_MASTER_KEY, "base64"), "", "proxy-armed-v1", 32),
+);
+const IV_LENGTH = 12;
+const TAG_LENGTH = 16;
+
+/** iv ‖ ciphertext ‖ tag */
+function encrypt(plaintext: string): Binary {
+  const iv = randomBytes(IV_LENGTH);
+  const cipher = createCipheriv("aes-256-gcm", DATA_KEY, iv);
+  const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  return new Binary(Buffer.concat([iv, ciphertext, cipher.getAuthTag()]));
+}
+
+function decrypt(blob: Binary): string {
+  const bytes = blob.value();
+  if (bytes.length < IV_LENGTH + TAG_LENGTH) {
+    throw new Error("Encrypted blob is too short");
+  }
+  const decipher = createDecipheriv("aes-256-gcm", DATA_KEY, bytes.subarray(0, IV_LENGTH));
+  decipher.setAuthTag(bytes.subarray(bytes.length - TAG_LENGTH));
+  return Buffer.concat([
+    decipher.update(bytes.subarray(IV_LENGTH, bytes.length - TAG_LENGTH)),
+    decipher.final(),
+  ]).toString("utf8");
+}
 
 export async function connectDB() {
   if (!db) {
@@ -31,15 +47,12 @@ export async function connectDB() {
     await db.collection(DB_ARMED_COLLECTION).createIndex({ armedId: 1 }, { unique: true });
   }
 
-  return {
-    db,
-    ...(await fle()),
-  };
+  return db;
 }
 
 export interface ArmedRecordDocument {
   armedId: string;
-  // Everything (incl. the armedId) in one authenticated FLE blob, so a Mongo
+  // Everything (incl. the armedId) in one AES-GCM blob, so a Mongo
   // writer can neither swap the host key / environment nor copy a blob between records.
   dataEnc: Binary;
   createdAt: Date;
@@ -48,11 +61,11 @@ export interface ArmedRecordDocument {
 export type Armed = ArmRequest & { id: string };
 
 export const storeArmed = traced("db.storeArmed", async (armedId: string, data: ArmRequest) => {
-  const { db, encrypt } = await connectDB();
+  const db = await connectDB();
 
   const record: ArmedRecordDocument = {
     armedId,
-    dataEnc: await encrypt(JSON.stringify({ armedId, ...data })),
+    dataEnc: encrypt(JSON.stringify({ armedId, ...data })),
     createdAt: new Date(),
   };
 
@@ -60,7 +73,7 @@ export const storeArmed = traced("db.storeArmed", async (armedId: string, data: 
 });
 
 export const getArmed = traced("db.getArmed", async (armedId: string): Promise<Armed | null> => {
-  const { db, decrypt } = await connectDB();
+  const db = await connectDB();
 
   const record = await db.collection<ArmedRecordDocument>(DB_ARMED_COLLECTION).findOne({ armedId });
 
@@ -69,7 +82,7 @@ export const getArmed = traced("db.getArmed", async (armedId: string): Promise<A
   }
 
   const { armedId: blobArmedId, ...data }: ArmRequest & { armedId: string } = JSON.parse(
-    await decrypt<string>(record.dataEnc),
+    decrypt(record.dataEnc),
   );
 
   if (blobArmedId !== armedId) {
@@ -81,7 +94,7 @@ export const getArmed = traced("db.getArmed", async (armedId: string): Promise<A
 
 /** True when a record was deleted, false when there was none. */
 export const deleteArmed = traced("db.deleteArmed", async (armedId: string): Promise<boolean> => {
-  const { db } = await connectDB();
+  const db = await connectDB();
   const { deletedCount } = await db.collection(DB_ARMED_COLLECTION).deleteOne({ armedId });
   return deletedCount === 1;
 });

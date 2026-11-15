@@ -6,7 +6,7 @@ signing every request with its own Ed25519 key. API reference: [openapi.yaml](./
 (served at `/docs` when running).
 
 ```
-host ──(1) POST /arm  {hostPublicKey, api, environment, auth, allow}──▶ enclave ──▶ Mongo (FLE blob)
+host ──(1) POST /arm  {hostPublicKey, api, environment, auth, allow}──▶ enclave ──▶ Mongo (AES-GCM blob)
 host ◀─────────────────────── { id } ─────────────────────────────┘
 host ──(2) GET /proxy/{id}/api/identifications/123 + Bearer <JWS> ─▶ enclave ──(auth added)──▶ vendor
 host ◀───────────────── vendor status + body ──────────────────────┘
@@ -151,7 +151,7 @@ Rotate a vendor key by arming again and disarming the old id.
 
 ```bash
 pnpm install
-# Once: the data key in proxyEncryption.__keyVault stays wrapped by this master key, so reuse it
+# Once: armed records stay encrypted under a key derived from this master key, so reuse it
 openssl rand -base64 96 | tr -d "\n" > .fle_master_key
 MONGO_URI=… AWS_REGION=… FLE_MASTER_KEY=$(cat .fle_master_key) ARM_TOKENS=dev-token pnpm start
 ```
