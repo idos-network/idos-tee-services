@@ -38,7 +38,7 @@ source "$SCRIPT_DIR/shared/nbd.ash"
 setup_nbd "proxy"
 
 # Generate-once secret (shared/kms.ash), decrypted with attestation into /run/secrets.
-# Master key of the mongodb `local` KMS provider (FLE, providers/db.ts): 96 random bytes
+# Master key the armed-record AES-GCM key is derived from (providers/db.ts): 96 random bytes
 generate_once proxy fle_master_key "$AWS_KMS_FLE_ARN" "openssl rand -base64 96 | tr -d '\\n'"
 
 echo "Fetching Caddyfile from S3"
