@@ -81,4 +81,20 @@ describe("armed records in Mongo", () => {
     expect(await getArmed("id-3")).toBeNull();
     expect(await deleteArmed("id-3")).toBe(false);
   });
+
+  it.each([
+    ["missing", undefined],
+    ["empty", ""],
+    ["short", Buffer.alloc(32).toString("base64")],
+  ])("refuses to load with a %s master key", async (_name, key) => {
+    const original = process.env.FLE_MASTER_KEY;
+    try {
+      if (key === undefined) delete process.env.FLE_MASTER_KEY;
+      else process.env.FLE_MASTER_KEY = key;
+      vi.resetModules();
+      await expect(import("../providers/db.ts")).rejects.toThrow(/96 bytes/);
+    } finally {
+      process.env.FLE_MASTER_KEY = original;
+    }
+  });
 });
