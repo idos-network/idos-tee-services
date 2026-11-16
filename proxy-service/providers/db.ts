@@ -12,9 +12,12 @@ const client = new MongoClient(MONGO_URI, {
 });
 
 // AES-256-GCM key derived from the master key, which scripts/run.ash decrypts with attestation.
-const DATA_KEY = Buffer.from(
-  hkdfSync("sha256", Buffer.from(FLE_MASTER_KEY, "base64"), "", "proxy-armed-v1", 32),
-);
+// An empty or truncated key would derive the same DATA_KEY in every deployment: fail at boot.
+const masterKey = Buffer.from(FLE_MASTER_KEY ?? "", "base64");
+if (masterKey.length !== 96) {
+  throw new Error("FLE_MASTER_KEY must decode to 96 bytes");
+}
+const DATA_KEY = Buffer.from(hkdfSync("sha256", masterKey, "", "proxy-armed-v1", 32));
 const IV_LENGTH = 12;
 const TAG_LENGTH = 16;
 
