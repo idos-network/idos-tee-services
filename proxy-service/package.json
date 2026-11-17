@@ -18,7 +18,7 @@
   "dependencies": {
     "@idos/nitro-nsm": "workspace:*",
     "@idos/tee-common": "workspace:*",
-    "@aws-sdk/credential-providers": "^3.1119.0",
+    "@aws-sdk/credential-providers": "^3.1169.0",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "express-prom-bundle": "^8.0.0",
