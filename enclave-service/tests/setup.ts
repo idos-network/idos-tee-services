@@ -9,4 +9,6 @@ process.env.SIGNING_KEY ??= Buffer.from(
   generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }),
 ).toString("base64");
 process.env.BASE_URL = "https://test.root.com";
+// Forced like BASE_URL: a value inherited from the shell would flip audienceVerification
+process.env.SKIP_AUDIENCE_VERIFICATION = "false";
 process.env.SESSION_TOKENS ??= "session-token-one, session-token-two";
