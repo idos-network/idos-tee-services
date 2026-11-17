@@ -8,6 +8,7 @@ import express, { type Express, type NextFunction, type Request, type Response }
 import promBundle from "express-prom-bundle";
 import { rateLimit } from "express-rate-limit";
 import helmet from "helmet";
+import { SKIP_AUDIENCE_VERIFICATION } from "./env.ts";
 import { sessionKeyMiddleware } from "./middleware/session-key.ts";
 import { sessionTokenMiddleware } from "./middleware/session-token.ts";
 import { validatorMiddleware } from "./middleware/validator.ts";
@@ -47,8 +48,13 @@ app.use(cors());
 app.use(["/encrypt", "/session/decrypt"], express.json({ limit: "32mb" }));
 app.use(express.json({ limit: "16kb" }));
 
+// SKIP_AUDIENCE_VERIFICATION comes from config.env, which isn't in the PCRs: /attestation
+// also signs it into the document's user_data so a verifier doesn't have to trust the JSON.
+const audienceVerification = !SKIP_AUDIENCE_VERIFICATION;
+const attestationUserData = Buffer.from(JSON.stringify({ audienceVerification }));
+
 app.get("/", (_req, res) => {
-  res.status(200).json({ message: "Enclave Service is running" });
+  res.status(200).json({ message: "Enclave Service is running", audienceVerification });
 });
 
 app.get("/health", async (_req, res) => {
@@ -83,9 +89,12 @@ app.get("/attestation", attestationLimiter, (req, res) => {
     getAttestationDocument({
       nonce: Buffer.from(parsed.data.nonce ?? "", "base64url"),
       publicKey: SIGNING_PUBLIC_KEY_DER,
+      userData: attestationUserData,
     }),
   );
-  return res.status(200).json({ attestation: attestation.toString("base64") });
+  return res
+    .status(200)
+    .json({ attestation: attestation.toString("base64"), audienceVerification });
 });
 
 app.post(

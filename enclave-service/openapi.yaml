@@ -35,11 +35,16 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [message]
+                required: [message, audienceVerification]
                 properties:
                   message:
                     type: string
                     example: enclave Service is running
+                  audienceVerification:
+                    type: boolean
+                    description: |
+                      false when the enclave runs with SKIP_AUDIENCE_VERIFICATION
+                      and trusts audience JWTs without checking their signature.
 
   /health:
     get:
@@ -85,7 +90,9 @@ paths:
         AWS Nitro hypervisor. Its `pcrs` identify the EIF, `nonce` echoes the
         query parameter and `public_key` is the signing key from
         `/.well-known/jwks.json` as SubjectPublicKeyInfo DER, so a verifier can
-        tie session signatures to a known enclave image.
+        tie session signatures to a known enclave image. `user_data` is
+        `{"audienceVerification":<bool>}`, the signed copy of the field below:
+        that setting comes from runtime config, not from the PCRs.
       operationId: getAttestation
       parameters:
         - name: nonce
@@ -102,11 +109,16 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [attestation]
+                required: [attestation, audienceVerification]
                 properties:
                   attestation:
                     type: string
                     description: Base64-encoded COSE_Sign1 (CBOR) attestation document
+                  audienceVerification:
+                    type: boolean
+                    description: |
+                      false when the enclave runs with SKIP_AUDIENCE_VERIFICATION
+                      and trusts audience JWTs without checking their signature.
         "400":
           description: Invalid nonce
           content:

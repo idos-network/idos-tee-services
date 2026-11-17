@@ -20,10 +20,14 @@ describe("GET /attestation", () => {
       .query({ nonce: nonce.toString("base64url") })
       .expect(200);
 
-    expect(res.body).toEqual({ attestation: document.toString("base64") });
+    expect(res.body).toEqual({
+      attestation: document.toString("base64"),
+      audienceVerification: true,
+    });
     expect(getAttestationDocument).toHaveBeenCalledExactlyOnceWith({
       nonce,
       publicKey: SIGNING_PUBLIC_KEY_DER,
+      userData: Buffer.from('{"audienceVerification":true}'),
     });
   });
 
