@@ -21,11 +21,27 @@ const client = new MongoClient(MONGO_URI, {
 // Key derived from the master key, which scripts/run.ash decrypts with attestation.
 const aead = createAesGcm(FLE_MASTER_KEY, "enclave-session-v1");
 
-// The AAD binds each blob to its session and field, so a Mongo writer can't swap blobs.
-const encrypt = (sessionId: string, field: string, value: string | Uint8Array) =>
-  new Binary(aead.encrypt(value, `${sessionId}/${field}`));
-const decrypt = (sessionId: string, field: string, blob: Binary) =>
-  aead.decrypt(blob.value(), `${sessionId}/${field}`);
+// The record's plaintext fields a Mongo writer could otherwise swap or edit (the client key
+// authenticates the session, createdAt sets its expiry).
+type BoundFields = Pick<
+  SessionRecordDocument,
+  "sessionId" | "sessionClientPublicKeyB64" | "sessionServerPublicKeyB64" | "createdAt"
+>;
+
+// The AAD binds each blob to its field and to the record's plaintext fields: changing any of
+// them, or moving a blob to another session or field, fails decryption.
+const aad = (record: BoundFields, field: string) =>
+  JSON.stringify([
+    field,
+    record.sessionId,
+    record.sessionClientPublicKeyB64,
+    record.sessionServerPublicKeyB64,
+    record.createdAt.getTime(),
+  ]);
+const encrypt = (record: BoundFields, field: string, value: string | Uint8Array) =>
+  new Binary(aead.encrypt(value, aad(record, field)));
+const decrypt = (record: BoundFields, field: string, blob: Binary) =>
+  aead.decrypt(blob.value(), aad(record, field));
 
 export async function connectDB() {
   if (!db) {
@@ -70,18 +86,22 @@ export const storeSession = traced(
   ) => {
     const db = await connectDB();
 
-    const record: SessionRecordDocument = {
+    const bound: BoundFields = {
       sessionId,
-      sessionServerPrivateKeyEnc: encrypt(sessionId, "privateKey", sessionServerKeyPair.secretKey),
-      sessionServerPublicKeyB64: Buffer.from(sessionServerKeyPair.publicKey).toString("base64url"),
       sessionClientPublicKeyB64,
-      sessionServerJwtChainEnc: encrypt(sessionId, "jwtChain", sessionServerJwtChain),
+      sessionServerPublicKeyB64: Buffer.from(sessionServerKeyPair.publicKey).toString("base64url"),
+      createdAt: new Date(),
+    };
+
+    const record: SessionRecordDocument = {
+      ...bound,
+      sessionServerPrivateKeyEnc: encrypt(bound, "privateKey", sessionServerKeyPair.secretKey),
+      sessionServerJwtChainEnc: encrypt(bound, "jwtChain", sessionServerJwtChain),
       allowedAudienceRootsEnc: encrypt(
-        sessionId,
+        bound,
         "allowedAudienceRoots",
         JSON.stringify(allowedAudienceRoots),
       ),
-      createdAt: new Date(),
     };
 
     await db.collection(DB_ENCLAVE_COLLECTION).insertOne(record);
@@ -120,13 +140,13 @@ export const getSession = traced(
     return {
       id: sessionId,
       allowedAudienceRoots: JSON.parse(
-        decrypt(sessionId, "allowedAudienceRoots", session.allowedAudienceRootsEnc).toString(),
+        decrypt(session, "allowedAudienceRoots", session.allowedAudienceRootsEnc).toString(),
       ),
       sessionClientPublicKey: Buffer.from(session.sessionClientPublicKeyB64, "base64url"),
-      sessionServerPrivateKey: decrypt(sessionId, "privateKey", session.sessionServerPrivateKeyEnc),
+      sessionServerPrivateKey: decrypt(session, "privateKey", session.sessionServerPrivateKeyEnc),
       sessionServerPublicKey: Buffer.from(session.sessionServerPublicKeyB64, "base64url"),
       sessionServerJwtChain: decrypt(
-        sessionId,
+        session,
         "jwtChain",
         session.sessionServerJwtChainEnc,
       ).toString(),

@@ -75,6 +75,17 @@ describe("session records in Mongo", () => {
   });
 
   it.each([
+    ["sessionClientPublicKeyB64", "attacker-pub"],
+    ["sessionServerPublicKeyB64", "attacker-pub"],
+    ["createdAt", new Date(Date.now() + 1000)],
+  ])("rejects a record whose %s was edited", async (field, value) => {
+    await store("s-edit");
+    doc("s-edit")[field] = value;
+
+    await expect(getSession("s-edit")).rejects.toThrow(/authenticate/);
+  });
+
+  it.each([
     ["missing", undefined],
     ["empty", ""],
     ["short", Buffer.alloc(32).toString("base64")],
