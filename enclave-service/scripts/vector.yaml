@@ -35,7 +35,8 @@ sources:
   express_metrics:
     type: prometheus_scrape
     endpoints:
-      - http://127.0.0.1:7000/metrics
+      # the cluster primary: metrics summed over all workers (index.ts)
+      - http://127.0.0.1:7001/metrics
     scrape_interval_secs: 15
 
   caddy_metrics:
