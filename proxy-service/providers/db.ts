@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";
+import { createAesGcm } from "@idos/tee-common/aes-gcm.ts";
 import { traced } from "@idos/tee-common/telemetry.ts";
 import { Binary, type Db, MongoClient } from "mongodb";
 import { DB_ARMED_COLLECTION, DB_NAME, FLE_MASTER_KEY, MONGO_URI } from "../env.ts";
@@ -11,36 +11,8 @@ const client = new MongoClient(MONGO_URI, {
   wtimeoutMS: 2500,
 });
 
-// AES-256-GCM key derived from the master key, which scripts/run.ash decrypts with attestation.
-// An empty or truncated key would derive the same DATA_KEY in every deployment: fail at boot.
-const masterKey = Buffer.from(FLE_MASTER_KEY ?? "", "base64");
-if (masterKey.length !== 96) {
-  throw new Error("FLE_MASTER_KEY must decode to 96 bytes");
-}
-const DATA_KEY = Buffer.from(hkdfSync("sha256", masterKey, "", "proxy-armed-v1", 32));
-const IV_LENGTH = 12;
-const TAG_LENGTH = 16;
-
-/** iv ‖ ciphertext ‖ tag */
-function encrypt(plaintext: string): Binary {
-  const iv = randomBytes(IV_LENGTH);
-  const cipher = createCipheriv("aes-256-gcm", DATA_KEY, iv);
-  const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
-  return new Binary(Buffer.concat([iv, ciphertext, cipher.getAuthTag()]));
-}
-
-function decrypt(blob: Binary): string {
-  const bytes = blob.value();
-  if (bytes.length < IV_LENGTH + TAG_LENGTH) {
-    throw new Error("Encrypted blob is too short");
-  }
-  const decipher = createDecipheriv("aes-256-gcm", DATA_KEY, bytes.subarray(0, IV_LENGTH));
-  decipher.setAuthTag(bytes.subarray(bytes.length - TAG_LENGTH));
-  return Buffer.concat([
-    decipher.update(bytes.subarray(IV_LENGTH, bytes.length - TAG_LENGTH)),
-    decipher.final(),
-  ]).toString("utf8");
-}
+// Key derived from the master key, which scripts/run.ash decrypts with attestation.
+const aead = createAesGcm(FLE_MASTER_KEY, "proxy-armed-v1");
 
 export async function connectDB() {
   if (!db) {
@@ -68,7 +40,7 @@ export const storeArmed = traced("db.storeArmed", async (armedId: string, data: 
 
   const record: ArmedRecordDocument = {
     armedId,
-    dataEnc: encrypt(JSON.stringify({ armedId, ...data })),
+    dataEnc: new Binary(aead.encrypt(JSON.stringify({ armedId, ...data }))),
     createdAt: new Date(),
   };
 
@@ -85,7 +57,7 @@ export const getArmed = traced("db.getArmed", async (armedId: string): Promise<A
   }
 
   const { armedId: blobArmedId, ...data }: ArmRequest & { armedId: string } = JSON.parse(
-    decrypt(record.dataEnc),
+    aead.decrypt(record.dataEnc.value()).toString("utf8"),
   );
 
   if (blobArmedId !== armedId) {

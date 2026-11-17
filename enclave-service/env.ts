@@ -4,8 +4,7 @@ export const MONGO_URI = process.env.MONGO_URI!;
 export const DB_ENCLAVE_COLLECTION = "idOSEnclave";
 export const DB_NAME = "enclave";
 export const SESSION_TTL_SECONDS = 60 * 60; // 1hour
-export const FLE_KEY_ALIAS = "enclave-enclave-key";
-// base64, 96 bytes: mongodb `local` KMS provider master key, see scripts/run.ash
+// base64, 96 bytes: master key the session-field AES key is derived from, see scripts/run.ash
 export const FLE_MASTER_KEY = process.env.FLE_MASTER_KEY!;
 export const AWS_REGION = process.env.AWS_REGION!;
 // base64 PKCS#8 PEM, Ed25519: session-signing key, see scripts/run.ash
