@@ -20,9 +20,6 @@ importers:
 
   enclave-service:
     dependencies:
-      '@aws-sdk/credential-provider-node':
-        specifier: ^3.972.97
-        version: 3.972.97
       '@aws-sdk/credential-providers':
         specifier: ^3.1169.0
         version: 3.1169.0
@@ -56,9 +53,6 @@ importers:
       mongodb:
         specifier: ^7.5.0
         version: 7.5.0(@aws-sdk/credential-providers@3.1169.0)(mongodb-client-encryption@7.2.1)(socks@2.8.9)
-      mongodb-client-encryption:
-        specifier: ^7.2.1
-        version: 7.2.1
       pino:
         specifier: ^10.3.1
         version: 10.3.1

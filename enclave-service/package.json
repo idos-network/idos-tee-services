@@ -16,7 +16,6 @@
     "format:ci": "npx @biomejs/biome ci"
   },
   "dependencies": {
-    "@aws-sdk/credential-provider-node": "^3.972.97",
     "@aws-sdk/credential-providers": "^3.1169.0",
     "@idos/nitro-nsm": "workspace:*",
     "@idos/tee-common": "workspace:*",
@@ -28,7 +27,6 @@
     "helmet": "^8.3.0",
     "jose": "^6.2.8",
     "mongodb": "^7.5.0",
-    "mongodb-client-encryption": "^7.2.1",
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",
     "prom-client": "npm:@prometheus-io/client@^0.16.1",

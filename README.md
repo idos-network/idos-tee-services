@@ -105,8 +105,9 @@ What decrypts this way (`kms_decrypt` in `shared/aws.ash`, which runs `packages/
   is uploaded with `If-None-Match: *`, so a failed download can't replace the password of an
   existing disk and the bucket policy can require the header on every `PutObject`.
 - FLE master key, `enclave/fle_master_key.enc` (`enclave-service/scripts/run.ash`). libmongocrypt's
-  `aws` provider can't send a Recipient, so field-level encryption now uses the `local` KMS
-  provider. Its 96-byte master key is generated once, KMS-encrypted with the FLE key
+  `aws` provider can't send a Recipient, so session fields are encrypted in-process with
+  AES-256-GCM (`packages/tee-common/aes-gcm.ts`, key HKDF-derived from this master key, AAD
+  `sessionId/field`). The 96-byte master key is generated once, KMS-encrypted with the FLE key
   (`AWS_KMS_FLE_ARN`), stored in S3 with `If-None-Match: *` (a failed download never
   overwrites it), decrypted at boot into `/run/secrets` (enclave RAM, not the NBD disk), and
   passed only to the express service as `FLE_MASTER_KEY`.
@@ -115,9 +116,7 @@ What decrypts this way (`kms_decrypt` in `shared/aws.ash`, which runs `packages/
   Instead an Ed25519 key (PKCS#8 PEM) is generated once the same way as the FLE master key,
   but KMS-encrypted with its own symmetric key (`AWS_KMS_SIGNING_WRAP_ARN` in `config.env`),
   decrypted at boot into `/run/secrets/signing_key` and passed to express as `SIGNING_KEY`.
-  The FLE key has to allow a plain decrypt for the data-key rewrap below; a separate key
-  gets its PCR condition independently of that migration and keeps the two secrets under
-  separate policies.
+  A separate key keeps the two secrets under separate policies.
   Signing happens in-process; `AWS_KMS_SIGNING_KEY_ARN`, the asymmetric KMS signing key, is
   no longer read. The JWKS `kid` is
   the key's RFC 7638 thumbprint, so it changes with the key; verifiers resolve keys through
@@ -125,19 +124,13 @@ What decrypts this way (`kms_decrypt` in `shared/aws.ash`, which runs `packages/
   kept for as long as `signing_key.enc` exists.
 - proxy-service does the same for its LUKS password (`proxy/luks_entropy_password.enc`) and FLE
   master key (`proxy/fle_master_key.enc`, `proxy-service/scripts/run.ash`), wrapped by its own
-  `AWS_KMS_FLE_ARN` from `proxy/config.env`. It was never deployed with the `aws` provider, so its
-  vault starts with a `local` data key and there is nothing to rewrap. It has no signing key.
+  `AWS_KMS_FLE_ARN` from `proxy/config.env`, and the same AES-GCM helper. It has no signing key.
 - Images without the addon (entropy-service, facesign-service) keep the plain host-role
   `aws kms decrypt` in `kms_decrypt`. Their keys live in other infra modules
   (`lib/entropy-tee`, `lib/facesign-tee`) and aren't PCR-restricted.
 
-On boot, `createFle` (`packages/tee-common/fle.ts`, `localMasterKey`) checks the data key
-(`enclave-enclave-key`). If it's still wrapped
-by `aws`, it calls `rewrapManyDataKey({"masterKey.provider": "aws"}, {provider: "local"})`
-once. That needs the old plain decrypt, so it must run before the PCR condition exists. The
-key `_id` stays the same, so existing encrypted session fields keep decrypting. After the
-rewrap, an older EIF (with only the `aws` provider) can't read the data keys anymore.
-Sessions expire within an hour, so the impact is limited, but plan rollbacks accordingly. Losing
+There is no migration from mongodb FLE: drop the `enclave.idOSEnclave` sessions and the
+`enclaveEncryption` database when deploying. Losing
 `fle_master_key.enc` (or the FLE KMS key) makes all stored sessions unreadable.
 
 ### Attestation endpoint
@@ -183,13 +176,10 @@ but doesn't prove where they came from. To close it (`lib/enclave-tee`):
    `enclave/fle_master_key.enc` and `enclave/signing_key.enc` (below) and apply. Without
    this the new EIF fails at boot.
 1. Deploy the new EIF with `enclave_measurements` still empty (no PCR condition). The boot
-   log should show `fle_master_key` and `signing_key` fetched or generated, and the express
-   log `FLE data keys rewrapped from aws to local` with `rewrapped: 1`. Check that sessions
-   created before the deploy still decrypt, that `/.well-known/jwks.json` serves the new
-   `kid` and that `/attestation` returns a document whose `public_key` matches it.
-   Those older sessions keep the `jwtChain` the KMS key signed, and the JWKS no longer
-   serves that key: a verifier rejects them until they expire, within the one hour session
-   TTL. Deploy when that is acceptable, or have clients create a new session.
+   log should show `fle_master_key` and `signing_key` fetched or generated. Check that new
+   sessions round-trip, that `/.well-known/jwks.json` serves the new `kid` and that
+   `/attestation` returns a document whose `public_key` matches it. Sessions created before
+   the deploy are dropped, so clients have to create a new session.
 2. Switch `enclave-service/scripts/enclave-run.ash` to a non-debug run (drop
    `--attach-console`, read logs through Loki/vector), redeploy, and check that boot still
    works. Then add that EIF's PCR0/1/2 from the GHA job summary to `enclave_measurements` in
@@ -203,8 +193,7 @@ but doesn't prove where they came from. To close it (`lib/enclave-tee`):
 `"${var.secrets_bucket_arn}/enclave/fle_master_key.enc"` and
 `"${var.secrets_bucket_arn}/enclave/signing_key.enc"` to `ReadConfigAndSecrets`
 (`s3:GetObject`) and `WriteGenerateOnceSecrets` (`s3:PutObject`). The FLE key policy needs
-nothing new: `kms:Encrypt` (generate-once) and `kms:Decrypt` (attested, plus the one-off
-rewrap before PCRs) are already granted to the instance role.
+nothing new: `kms:Encrypt` (generate-once) and `kms:Decrypt` (attested) are already granted to the instance role.
 
 `lib/enclave-tee/kms.tf`: a new symmetric key (`ENCRYPT_DECRYPT`) for the signing key, with
 `kms:Encrypt` and `kms:Decrypt` for the instance role and the same `enclave_measurements`
@@ -226,7 +215,7 @@ applies to `proxy/*.enc` the same way.
 
 - **entropy-service** has the same `aws` FLE provider and host-callable keys
   (`lib/entropy-tee`). It's untouched here. Hardening it means the same three steps: the `nsm`
-  stage and `@idos/nitro-nsm` in its image, the `local` provider with rewrap, and PCR conditions in its key policy.
+  stage and `@idos/nitro-nsm` in its image, AES-GCM from `packages/tee-common/aes-gcm.ts` instead of FLE, and PCR conditions in its key policy.
 
 ## Setting up facesign service
 

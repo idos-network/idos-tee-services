@@ -1,13 +1,11 @@
-import { defaultProvider } from "@aws-sdk/credential-provider-node";
-import { createFle } from "@idos/tee-common/fle.ts";
+import { createAesGcm } from "@idos/tee-common/aes-gcm.ts";
 import { getLogger } from "@idos/tee-common/logger.ts";
 import { traced } from "@idos/tee-common/telemetry.ts";
-import { type Binary, ClientEncryption, type Db, MongoClient } from "mongodb";
+import { Binary, type Db, MongoClient } from "mongodb";
 import type { BoxKeyPair } from "tweetnacl";
 import {
   DB_ENCLAVE_COLLECTION,
   DB_NAME,
-  FLE_KEY_ALIAS,
   FLE_MASTER_KEY,
   MONGO_URI,
   SESSION_TTL_SECONDS,
@@ -20,16 +18,14 @@ const client = new MongoClient(MONGO_URI, {
   wtimeoutMS: 2500,
 });
 
-const fle = createFle({
-  client,
-  ClientEncryption,
-  // only for the one-off rewrap of data keys still wrapped by KMS
-  credentialsProvider: defaultProvider(),
-  keyDb: "enclaveEncryption",
-  keyAlias: FLE_KEY_ALIAS,
-  // decrypted with attestation by scripts/run.ash, see localMasterKey in tee-common/fle.ts
-  localMasterKey: Buffer.from(FLE_MASTER_KEY, "base64"),
-});
+// Key derived from the master key, which scripts/run.ash decrypts with attestation.
+const aead = createAesGcm(FLE_MASTER_KEY, "enclave-session-v1");
+
+// The AAD binds each blob to its session and field, so a Mongo writer can't swap blobs.
+const encrypt = (sessionId: string, field: string, value: string | Uint8Array) =>
+  new Binary(aead.encrypt(value, `${sessionId}/${field}`));
+const decrypt = (sessionId: string, field: string, blob: Binary) =>
+  aead.decrypt(blob.value(), `${sessionId}/${field}`);
 
 export async function connectDB() {
   if (!db) {
@@ -50,10 +46,7 @@ export async function connectDB() {
       .catch((error) => getLogger().error({ error: String(error) }, "sessionId index failed"));
   }
 
-  return {
-    db,
-    ...(await fle()),
-  };
+  return db;
 }
 
 export interface SessionRecordDocument {
@@ -75,22 +68,19 @@ export const storeSession = traced(
     sessionServerJwtChain: string,
     allowedAudienceRoots: string[],
   ) => {
-    const { db, encrypt } = await connectDB();
-
-    const [sessionServerPrivateKeyEnc, sessionServerJwtChainEnc, allowedAudienceRootsEnc] =
-      await Promise.all([
-        encrypt(sessionServerKeyPair.secretKey),
-        encrypt(sessionServerJwtChain),
-        encrypt(JSON.stringify(allowedAudienceRoots)),
-      ]);
+    const db = await connectDB();
 
     const record: SessionRecordDocument = {
       sessionId,
-      sessionServerPrivateKeyEnc,
+      sessionServerPrivateKeyEnc: encrypt(sessionId, "privateKey", sessionServerKeyPair.secretKey),
       sessionServerPublicKeyB64: Buffer.from(sessionServerKeyPair.publicKey).toString("base64url"),
       sessionClientPublicKeyB64,
-      sessionServerJwtChainEnc,
-      allowedAudienceRootsEnc,
+      sessionServerJwtChainEnc: encrypt(sessionId, "jwtChain", sessionServerJwtChain),
+      allowedAudienceRootsEnc: encrypt(
+        sessionId,
+        "allowedAudienceRoots",
+        JSON.stringify(allowedAudienceRoots),
+      ),
       createdAt: new Date(),
     };
 
@@ -99,7 +89,7 @@ export const storeSession = traced(
 );
 
 export const deleteSession = traced("db.deleteSession", async (sessionId: string) => {
-  const { db } = await connectDB();
+  const db = await connectDB();
   await db.collection(DB_ENCLAVE_COLLECTION).deleteOne({ sessionId });
 });
 
@@ -115,7 +105,7 @@ export interface Session {
 export const getSession = traced(
   "db.getSession",
   async (sessionId: string): Promise<Session | null> => {
-    const { db, decrypt } = await connectDB();
+    const db = await connectDB();
 
     const session = await db
       .collection<SessionRecordDocument>(DB_ENCLAVE_COLLECTION)
@@ -127,20 +117,19 @@ export const getSession = traced(
       return null;
     }
 
-    const [sessionServerPrivateKey, allowedAudienceRoots, sessionServerJwtChain] =
-      await Promise.all([
-        decrypt<Binary>(session.sessionServerPrivateKeyEnc),
-        decrypt<string>(session.allowedAudienceRootsEnc),
-        decrypt<string>(session.sessionServerJwtChainEnc),
-      ]);
-
     return {
       id: sessionId,
-      allowedAudienceRoots: JSON.parse(allowedAudienceRoots),
+      allowedAudienceRoots: JSON.parse(
+        decrypt(sessionId, "allowedAudienceRoots", session.allowedAudienceRootsEnc).toString(),
+      ),
       sessionClientPublicKey: Buffer.from(session.sessionClientPublicKeyB64, "base64url"),
-      sessionServerPrivateKey: sessionServerPrivateKey.buffer,
+      sessionServerPrivateKey: decrypt(sessionId, "privateKey", session.sessionServerPrivateKeyEnc),
       sessionServerPublicKey: Buffer.from(session.sessionServerPublicKeyB64, "base64url"),
-      sessionServerJwtChain,
+      sessionServerJwtChain: decrypt(
+        sessionId,
+        "jwtChain",
+        session.sessionServerJwtChainEnc,
+      ).toString(),
     };
   },
 );
