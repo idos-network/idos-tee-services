@@ -107,7 +107,8 @@ What decrypts this way (`kms_decrypt` in `shared/aws.ash`, which runs `packages/
 - FLE master key, `enclave/fle_master_key.enc` (`enclave-service/scripts/run.ash`). libmongocrypt's
   `aws` provider can't send a Recipient, so session fields are encrypted in-process with
   AES-256-GCM (`packages/tee-common/aes-gcm.ts`, key HKDF-derived from this master key, AAD
-  `sessionId/field`). The 96-byte master key is generated once, KMS-encrypted with the FLE key
+  the field plus the record's plaintext `sessionId`, public keys and `createdAt`). The 96-byte
+  master key is generated once, KMS-encrypted with the FLE key
   (`AWS_KMS_FLE_ARN`), stored in S3 with `If-None-Match: *` (a failed download never
   overwrites it), decrypted at boot into `/run/secrets` (enclave RAM, not the NBD disk), and
   passed only to the express service as `FLE_MASTER_KEY`.
