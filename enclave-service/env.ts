@@ -12,6 +12,15 @@ export const SIGNING_KEY = process.env.SIGNING_KEY!;
 export const BASE_URL = process.env.BASE_URL!;
 // TEMPORARY (staging only): trust the audience JWT without verifying its signature.
 export const SKIP_AUDIENCE_VERIFICATION = process.env.SKIP_AUDIENCE_VERIFICATION === "true";
+// Never in production: fail at import, before the server listens.
+const PRODUCTION_HOST = "enclave.tee.idos.network";
+const baseHost = (BASE_URL ?? "")
+  .replace(/^https?:\/\//i, "")
+  .split(/[/:]/)[0]
+  ?.toLowerCase();
+if (SKIP_AUDIENCE_VERIFICATION && baseHost === PRODUCTION_HOST) {
+  throw new Error(`SKIP_AUDIENCE_VERIFICATION is not allowed on ${PRODUCTION_HOST}`);
+}
 // Bearer tokens allowed to call POST /session (comma separated in config.env).
 export const SESSION_TOKENS = (process.env.SESSION_TOKENS ?? "")
   .split(",")
