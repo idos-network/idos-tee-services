@@ -7,7 +7,10 @@ describe("health + JWKS", () => {
   beforeEach(resetMocks);
 
   it("GET / and /health", async () => {
-    await request(app).get("/").expect(200).expect({ message: "Enclave Service is running" });
+    await request(app)
+      .get("/")
+      .expect(200)
+      .expect({ message: "Enclave Service is running", audienceVerification: true });
 
     await request(app).get("/health").expect(200).expect({ status: "ok" });
   });
