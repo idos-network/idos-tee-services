@@ -11,6 +11,7 @@ import helmet from "helmet";
 import { armTokenMiddleware } from "./middleware/arm-token.ts";
 import { hostAuthMiddleware } from "./middleware/host-auth.ts";
 import { validatorMiddleware } from "./middleware/validator.ts";
+import { actions } from "./providers/counters.ts";
 import { type Armed, deleteArmed, storeArmed } from "./providers/db.ts";
 import { forward, isAllowed, resolveUpstreamUrl } from "./providers/proxy.ts";
 import { vendors } from "./providers/vendors/index.ts";
@@ -103,7 +104,8 @@ app.all(
       return res.status(403).json({ error: `${req.method} ${upstreamPath} is not allowed` });
     }
 
-    writeLog("proxy_request", { armedId: armed.id, method: req.method, path: upstreamPath });
+    // Counter only: the "request completed" line already carries method and url (incl. armedId).
+    actions.inc({ action: "proxy_request" });
 
     let upstream: Awaited<ReturnType<typeof forward>>;
     try {

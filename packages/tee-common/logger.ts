@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import type { NextFunction, Request, Response } from "express";
 import type { Logger } from "pino";
 import pino from "pino";
@@ -39,12 +40,37 @@ const sensitiveHeaderPaths = sensitiveHeaders.flatMap((header) => [
   `headers['${header}']`,
 ]);
 
+// Full request headers only help when a request failed, so only those get them.
+function withFailedRequestHeaders(req: IncomingMessage, res: ServerResponse, val: object) {
+  if (res.statusCode < 400) return val;
+  const {
+    "content-type": contentType,
+    "content-length": contentLength,
+    "accept-encoding": acceptEncoding,
+  } = req.headers;
+  return { ...val, reqHeaders: { contentType, contentLength, acceptEncoding } };
+}
+
 const logger = pinoHttp({
   enabled: process.env.NODE_ENV !== "test",
   formatters: {
     level: (label) => ({ level: label }),
   },
   genReqId: () => getRequestId() ?? "-",
+  // Every line used to carry all request and response headers (~2 kB, mostly static helmet
+  // headers), which outran log shipping under load. Dashboards read only req.url/method and res.statusCode.
+  serializers: {
+    req: (req) => ({
+      id: req.id,
+      method: req.method,
+      url: req.url,
+      ip: req.headers["x-real-ip"],
+      userAgent: req.headers["user-agent"],
+    }),
+    res: (res) => ({ statusCode: res.statusCode }),
+  },
+  customSuccessObject: withFailedRequestHeaders,
+  customErrorObject: (req, res, _error, val) => withFailedRequestHeaders(req, res, val),
   redact: {
     paths: sensitiveHeaderPaths,
     censor: "[Redacted]",
