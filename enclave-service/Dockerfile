@@ -4,52 +4,48 @@ FROM timberio/vector@sha256:32fd554fdd6dc3c17b5ec8e983e9889f37b0c87fa3c8cc28aa31
 # NSM addon of @idos/nitro-nsm (packages/nitro-nsm/src/lib.rs): the attestation document from
 # /dev/nsm, for KMS Decrypt with a Recipient (shared/aws.ash) and GET /attestation.
 # Crates are pinned with checksums by Cargo.lock.
-FROM rust:1.92-slim-bookworm@sha256:f1f73538ebe623fd3673a35aff3df358ae1084c64c55646516e5b17b321b6c9b AS nsm
+FROM rust:1.92-alpine3.23@sha256:f6c22e0a256c05d44fca23bf530120b5d4a6249a393734884281ca80782329bc AS nsm
+
+RUN apk add --no-cache musl-dev
+# musl targets link statically by default, which rules out a cdylib Node can dlopen
+ENV RUSTFLAGS="-C target-feature=-crt-static"
 
 WORKDIR /build
 COPY packages/nitro-nsm/Cargo.toml packages/nitro-nsm/Cargo.lock ./
 COPY packages/nitro-nsm/src ./src
 RUN cargo build --release --locked
 
-# Base runtime image.
-FROM ubuntu:24.04@sha256:2198e4c65076e9cb0b3d695219df667c0e3b0072da64ca3c2648aca17dcecaf5
+# Base runtime image: Node at .node-version (v24.13.0) on Alpine.
+FROM node:24.13.0-alpine3.23@sha256:cd6fb7efa6490f039f3471a189214d5f548c11df1ff9e5b181aa49e22c14383e
 
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends --no-install-suggests \
+# bash: run.ash and shared/*.ash; openssl: shared/aws.ash and nitro-nsm/kms-decrypt.ts.
+RUN apk add --no-cache \
+    bash \
+    blkid \
     ca-certificates \
     chrony \
     cryptsetup \
-    e2fsprogs \
     curl \
+    e2fsprogs \
     iproute2 \
     iptables \
+    iptables-legacy \
     jq \
-    libnbd-bin \
     nbd-client \
-    net-tools \
     openssh-server \
+    openssl \
     s6 \
     socat \
-    && update-ca-certificates \
-    && rm -rf /var/cache/apt/archives /var/lib/apt/lists/*
+    && update-ca-certificates
 
-# Install Caddy (pinned + SHA-256 verified)
+# Install Caddy (pinned + SHA-256 verified), a static Go binary
 ARG CADDY_VERSION=2.11.4
-ARG CADDY_SHA256=c41708ffb4af9bc6d19f7d22a7a034804352a21ecc62e1d3dfe3d58e30b38a3e
-RUN curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.deb" -o "/tmp/caddy.deb" \
-    && echo "${CADDY_SHA256}  /tmp/caddy.deb" | sha256sum -c - \
-    && dpkg -i /tmp/caddy.deb \
-    && rm -f /tmp/caddy.deb
-
-# Install Node.js at .node-version (v24.13.0), pinned + SHA-256 verified
-ARG NODE_VERSION=24.13.0
-ARG NODE_SHA256=6223aad1a81f9d1e7b682c59d12e2de233f7b4c37475cd40d1c89c42b737ffa8
-RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" -o "/tmp/node-v${NODE_VERSION}-linux-x64.tar.gz" \
-    && echo "${NODE_SHA256}  /tmp/node-v${NODE_VERSION}-linux-x64.tar.gz" | sha256sum -c - \
-    && tar -xzf "/tmp/node-v${NODE_VERSION}-linux-x64.tar.gz" -C /usr/local --strip-components=1 \
-    && rm -f "/tmp/node-v${NODE_VERSION}-linux-x64.tar.gz" \
-    && node -v | grep -F "v${NODE_VERSION}"
+ARG CADDY_SHA256=527fbf917c39189a1e3b31d34fa955601680b2d5c8055d2a87b8b9588dec7bb9
+RUN curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz" -o /tmp/caddy.tar.gz \
+    && echo "${CADDY_SHA256}  /tmp/caddy.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/caddy.tar.gz -C /usr/bin caddy \
+    && rm -f /tmp/caddy.tar.gz \
+    && caddy version | grep -F "v${CADDY_VERSION}"
 
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
@@ -68,9 +64,10 @@ COPY enclave-service ./enclave-service
 # Install dependencies
 # copy, not hardlink: nitro-cli's linuxkit turns tar hardlinks into symlinks, so a .js that
 # pnpm deduplicated with an identical .d.ts can end up as a symlink to the .d.ts and Node refuses it
-# The lockfile covers every service; drop it so another service's bump doesn't change this image
+# The lockfile covers every service; drop it so another service's bump doesn't change this image.
+# The corepack/pnpm caches go too: run.ash starts node directly, pnpm isn't used at runtime.
 RUN pnpm install --prod --frozen-lockfile --filter "enclave-service..." --package-import-method=copy \
-    && rm -rf "$(pnpm store path)" pnpm-lock.yaml
+    && rm -rf "$(pnpm store path)" pnpm-lock.yaml /root/.cache
 
 # Shared boot scripts sourced by scripts/run.ash
 COPY shared ./enclave-service/scripts/shared
