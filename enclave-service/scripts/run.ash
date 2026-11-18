@@ -57,6 +57,10 @@ fi
 
 mkdir -p /mnt/encrypted/vector
 
+# No log copy to the console: each line costs kernel time on the slow enclave
+# console, and under load a vCPU sat at 100% in the kernel. Logs still reach
+# Loki through vector; boot output before s6 still goes to the console.
+S6_LOG_CONSOLE=
 source "$SCRIPT_DIR/shared/s6.ash"
 source "$SCRIPT_DIR/shared/clock.ash"
 setup_clock_sync
