@@ -72,6 +72,9 @@ export HOME=/app
 s6_service express 'cd /app/enclave-service && export NODE_ENV=production && export FLE_MASTER_KEY="$(cat /run/secrets/fle_master_key)" SIGNING_KEY="$(cat /run/secrets/signing_key)" && exec node index.ts'
 s6_service caddy   'cd /app && exec caddy run --config /app/Caddyfile --adapter caddyfile'
 s6_service node    'exec node_exporter --no-collector.kernel_hung'
+# Except vector: vector.yaml excludes its own logs, so if it cannot start or
+# ship, the console is the only place its errors show. It logs little.
+S6_LOG_CONSOLE=1
 s6_service vector  'exec vector --config /etc/vector/vector.yaml'
 
 echo "Running services under s6"
