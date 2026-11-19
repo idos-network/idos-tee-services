@@ -130,16 +130,13 @@ What decrypts this way (`kms_decrypt` in `shared/aws.ash`, which runs `packages/
   `aws kms decrypt` in `kms_decrypt`. Their keys live in other infra modules
   (`lib/entropy-tee`, `lib/facesign-tee`) and aren't PCR-restricted.
 
-There is no migration from mongodb FLE: drop the `enclave.idOSEnclave` sessions and the
-`enclaveEncryption` database when deploying. Losing
-`fle_master_key.enc` (or the FLE KMS key) makes all stored sessions unreadable.
+Losing `fle_master_key.enc` (or the FLE KMS key) makes all stored sessions unreadable.
 
 Sessions (enclave-service) and armed records (proxy-service) live in DynamoDB tables named by
-`DYNAMODB_SESSIONS_TABLE` / `DYNAMODB_ARMED_TABLE` in each `config.env`, with the same AES-GCM
-blobs. While `enclave/config.env` still sets `MONGO_URI`, enclave boot copies the live (< 1 h)
-Mongo sessions into DynamoDB first (`enclave-service/scripts/migrate-sessions.ts`); armed
-records are not migrated. Both services need a `dynamodb.<region>.amazonaws.com` entry in
-their `vsock.json`.
+`DYNAMODB_SESSIONS_TABLE` / `DYNAMODB_ARMED_TABLE` in each `config.env`; neither service uses
+Mongo any more. Both need a `dynamodb.<region>.amazonaws.com` entry in their `vsock.json`.
+The old `enclave.idOSEnclave`, `enclaveEncryption` and `proxy.idOSProxyArmed` Mongo data can
+be dropped, and `MONGO_URI` / `MONGO_HOST` removed from `enclave/config.env` and `proxy/config.env`.
 
 ### Attestation endpoint
 
