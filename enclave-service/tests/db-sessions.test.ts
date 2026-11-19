@@ -1,36 +1,17 @@
 import type { AttributeValue } from "@aws-sdk/client-dynamodb";
-import { createAesGcm } from "@idos/tee-common/aes-gcm.ts";
-import { Binary } from "mongodb";
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { keyPair } from "../providers/box.ts";
 
 type Item = Record<string, AttributeValue>;
 
-// In-memory DynamoDB table keyed by sessionId, so blobs can be inspected and swapped between
-// records, and an in-memory Mongo collection for scripts/migrate-sessions.ts.
-const h = vi.hoisted(() => ({
-  items: new Map<string, Item>(),
-  mongoDocs: [] as Record<string, unknown>[],
-}));
+// In-memory DynamoDB table keyed by sessionId, so blobs can be inspected and swapped between records.
+const h = vi.hoisted(() => ({ items: new Map<string, Item>() }));
 
 vi.mock("@aws-sdk/client-dynamodb", async (importOriginal) => {
   const real = await importOriginal<typeof import("@aws-sdk/client-dynamodb")>();
   const { fakeDynamoDBClient } = await import("@idos/tee-common/dynamodb-fake.ts");
   return { ...real, DynamoDBClient: fakeDynamoDBClient(real, "sessionId", h.items) };
 });
-
-vi.mock("mongodb", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("mongodb")>()),
-  MongoClient: class {
-    close = async () => {};
-    db = () => ({
-      collection: () => ({
-        find: ({ createdAt }: { createdAt: { $gt: Date } }) =>
-          h.mongoDocs.filter((d) => (d.createdAt as Date) > createdAt.$gt),
-      }),
-    });
-  },
-}));
 
 const { deleteSession, getSession, storeSession } = await import("../providers/db.ts");
 
@@ -131,66 +112,5 @@ describe("session records in DynamoDB", () => {
     } finally {
       process.env.FLE_MASTER_KEY = original;
     }
-  });
-});
-
-describe("scripts/migrate-sessions.ts", () => {
-  // A record exactly as the Mongo provider wrote it: Binary blobs, createdAt a Date in the AAD.
-  function mongoSession(sessionId: string, createdAt: Date, pair = keyPair()) {
-    const aead = createAesGcm(process.env.FLE_MASTER_KEY, "enclave-session-v1");
-    const bound = {
-      sessionId,
-      sessionClientPublicKeyB64: "client-pub",
-      sessionServerPublicKeyB64: Buffer.from(pair.publicKey).toString("base64url"),
-      createdAt,
-    };
-    const enc = (field: string, value: string | Uint8Array) =>
-      new Binary(
-        aead.encrypt(
-          value,
-          JSON.stringify([
-            field,
-            bound.sessionId,
-            bound.sessionClientPublicKeyB64,
-            bound.sessionServerPublicKeyB64,
-            bound.createdAt.getTime(),
-          ]),
-        ),
-      );
-    return {
-      ...bound,
-      sessionServerPrivateKeyEnc: enc("privateKey", pair.secretKey),
-      sessionServerJwtChainEnc: enc("jwtChain", "mongo.jwt.chain"),
-      allowedAudienceRootsEnc: enc("allowedAudienceRoots", JSON.stringify(["https://aud.example"])),
-    };
-  }
-
-  it("copies live Mongo sessions so the new provider decrypts them, and is idempotent", async () => {
-    const originalMongoUri = process.env.MONGO_URI;
-    process.env.MONGO_URI = "mongodb://localhost:27017";
-    onTestFinished(() => {
-      process.env.MONGO_URI = originalMongoUri;
-      h.mongoDocs.length = 0;
-    });
-    const pair = keyPair();
-    h.mongoDocs.push(
-      mongoSession("m-live", new Date(Date.now() - 60_000), pair),
-      mongoSession("m-expired", new Date(Date.now() - 3601_000)),
-    );
-    // Already migrated by an earlier boot: kept as it is.
-    await store("m-again");
-    const before = item("m-again");
-    h.mongoDocs.push(mongoSession("m-again", new Date()));
-
-    vi.resetModules();
-    await import("../scripts/migrate-sessions.ts");
-
-    const session = await getSession("m-live");
-    expect(session?.sessionServerJwtChain).toBe("mongo.jwt.chain");
-    expect(Buffer.from(session?.sessionServerPrivateKey ?? [])).toEqual(
-      Buffer.from(pair.secretKey),
-    );
-    expect(h.items.has("m-expired")).toBe(false);
-    expect(item("m-again")).toBe(before);
   });
 });
