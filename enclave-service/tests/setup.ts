@@ -1,7 +1,7 @@
 import { generateKeyPairSync } from "node:crypto";
 
 process.env.NODE_ENV ??= "test";
-process.env.MONGO_URI ??= "mongodb://localhost:27017";
+process.env.DYNAMODB_SESSIONS_TABLE ??= "test-sessions";
 process.env.AWS_REGION ??= "eu-central-1";
 process.env.FLE_MASTER_KEY ??= Buffer.alloc(96).toString("base64");
 // Fresh Ed25519 key per run, the base64 PKCS#8 PEM shape scripts/run.ash hands over

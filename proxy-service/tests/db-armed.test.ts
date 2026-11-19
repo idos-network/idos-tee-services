@@ -1,46 +1,61 @@
-import { Binary } from "mongodb";
+import type { AttributeValue } from "@aws-sdk/client-dynamodb";
 import { describe, expect, it, vi } from "vitest";
 import { armBody } from "./helpers.ts";
 
-// In-memory Mongo with the real Binary, so blobs can be inspected and swapped between records.
-const h = vi.hoisted(() => {
-  const docs = new Map<string, Record<string, unknown>>();
-  return {
-    docs,
-    collection: {
-      createIndex: async () => {},
-      insertOne: async (doc: Record<string, unknown>) => {
-        docs.set(doc.armedId as string, doc);
-      },
-      findOne: async ({ armedId }: { armedId: string }) => docs.get(armedId) ?? null,
-      deleteOne: async ({ armedId }: { armedId: string }) => ({
-        deletedCount: docs.delete(armedId) ? 1 : 0,
-      }),
-    },
-  };
-});
+type Item = Record<string, AttributeValue>;
 
-vi.mock("mongodb", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("mongodb")>()),
-  MongoClient: class {
-    connect = async () => {};
-    db = () => ({ collection: () => h.collection });
-  },
-}));
+// In-memory DynamoDB table keyed by armedId, so blobs can be inspected and swapped between records.
+const h = vi.hoisted(() => ({ items: new Map<string, Item>() }));
+
+vi.mock("@aws-sdk/client-dynamodb", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@aws-sdk/client-dynamodb")>();
+  const conditionFailed = () =>
+    new real.ConditionalCheckFailedException({ message: "condition failed", $metadata: {} });
+
+  class DynamoDBClient {
+    async send(command: { input: { Key?: Item; Item?: Item; ConditionExpression?: string } }) {
+      const { input } = command;
+      const id = (input.Key ?? input.Item)?.armedId?.S as string;
+      const exists = h.items.has(id);
+      if (command instanceof real.PutItemCommand) {
+        if (input.ConditionExpression?.includes("attribute_not_exists") && exists) {
+          throw conditionFailed();
+        }
+        h.items.set(id, input.Item as Item);
+        return {};
+      }
+      if (command instanceof real.GetItemCommand) return { Item: h.items.get(id) };
+      if (command instanceof real.DeleteItemCommand) {
+        if (input.ConditionExpression?.includes("attribute_exists") && !exists) {
+          throw conditionFailed();
+        }
+        h.items.delete(id);
+        return {};
+      }
+      throw new Error("unexpected command");
+    }
+  }
+
+  return { ...real, DynamoDBClient };
+});
 
 const { deleteArmed, getArmed, storeArmed } = await import("../providers/db.ts");
 
-describe("armed records in Mongo", () => {
+function item(id: string) {
+  const i = h.items.get(id);
+  if (!i) throw new Error("record missing");
+  return i;
+}
+
+describe("armed records in DynamoDB", () => {
   it("stores everything but the id as one encrypted blob", async () => {
     await storeArmed("id-1", armBody());
 
-    const doc = h.docs.get("id-1");
-    expect(doc).toBeDefined();
-    const { dataEnc, ...plaintext } = doc ?? {};
-    expect(dataEnc).toBeDefined();
+    const { dataEnc, ...plaintext } = item("id-1");
+    expect(dataEnc?.B).toBeDefined();
     expect(Object.keys(plaintext).sort()).toEqual(["armedId", "createdAt"]);
     expect(JSON.stringify(plaintext)).not.toContain("iron-secret");
-    expect(Buffer.from((dataEnc as Binary).value()).toString()).not.toContain("iron-secret");
+    expect(Buffer.from(dataEnc?.B ?? []).toString()).not.toContain("iron-secret");
   });
 
   it("round-trips the armed record", async () => {
@@ -50,14 +65,19 @@ describe("armed records in Mongo", () => {
     expect(armed).toEqual({ id: "id-2", ...armBody() });
   });
 
+  it("never overwrites an existing record", async () => {
+    await storeArmed("id-5", armBody());
+
+    await expect(storeArmed("id-5", armBody({ environment: "production" }))).rejects.toThrow(
+      /condition/,
+    );
+    expect(await getArmed("id-5")).toEqual({ id: "id-5", ...armBody() });
+  });
+
   it("rejects a blob copied from another record", async () => {
     await storeArmed("victim", armBody());
     await storeArmed("attacker", armBody({ environment: "production" }));
-
-    const victim = h.docs.get("victim");
-    const attacker = h.docs.get("attacker");
-    if (!victim || !attacker) throw new Error("records missing");
-    attacker.dataEnc = victim.dataEnc;
+    item("attacker").dataEnc = item("victim").dataEnc as AttributeValue;
 
     await expect(getArmed("attacker")).rejects.toThrow(/armedId/);
   });
@@ -65,11 +85,9 @@ describe("armed records in Mongo", () => {
   it("rejects a tampered blob", async () => {
     await storeArmed("id-4", armBody());
 
-    const doc = h.docs.get("id-4");
-    if (!doc) throw new Error("record missing");
-    const bytes = Buffer.from((doc.dataEnc as Binary).value());
+    const bytes = Buffer.from(item("id-4").dataEnc?.B ?? []);
     bytes.writeUInt8(bytes.readUInt8(20) ^ 1, 20);
-    doc.dataEnc = new Binary(bytes);
+    item("id-4").dataEnc = { B: bytes };
 
     await expect(getArmed("id-4")).rejects.toThrow(/authenticate/);
   });

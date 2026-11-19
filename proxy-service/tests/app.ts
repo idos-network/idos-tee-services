@@ -28,7 +28,6 @@ vi.mock("../providers/db.ts", () => ({
   storeArmed: mocks.storeArmed,
   getArmed: mocks.getArmed,
   deleteArmed: mocks.deleteArmed,
-  connectDB: vi.fn(),
 }));
 
 const { default: app } = await import("../server.ts");

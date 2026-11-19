@@ -1,32 +1,29 @@
-import { createAesGcm } from "@idos/tee-common/aes-gcm.ts";
-import { getLogger } from "@idos/tee-common/logger.ts";
-import { traced } from "@idos/tee-common/telemetry.ts";
-import { Binary, type Db, MongoClient } from "mongodb";
-import type { BoxKeyPair } from "tweetnacl";
 import {
-  DB_ENCLAVE_COLLECTION,
-  DB_NAME,
-  FLE_MASTER_KEY,
-  MONGO_URI,
-  SESSION_TTL_SECONDS,
-} from "../env.ts";
+  DeleteItemCommand,
+  DynamoDBClient,
+  GetItemCommand,
+  PutItemCommand,
+} from "@aws-sdk/client-dynamodb";
+import { createAesGcm } from "@idos/tee-common/aes-gcm.ts";
+import { traced } from "@idos/tee-common/telemetry.ts";
+import type { BoxKeyPair } from "tweetnacl";
+import { DYNAMODB_SESSIONS_TABLE, FLE_MASTER_KEY, SESSION_TTL_SECONDS } from "../env.ts";
 
-let db: Db | null = null;
-
-const client = new MongoClient(MONGO_URI, {
-  maxPoolSize: 40,
-  wtimeoutMS: 2500,
-});
+// Region and credentials from the SDK defaults (AWS_REGION, instance role via IMDS).
+const client = new DynamoDBClient({});
 
 // Key derived from the master key, which scripts/run.ash decrypts with attestation.
 const aead = createAesGcm(FLE_MASTER_KEY, "enclave-session-v1");
 
-// The record's plaintext fields a Mongo writer could otherwise swap or edit (the client key
-// authenticates the session, createdAt sets its expiry).
-type BoundFields = Pick<
-  SessionRecordDocument,
-  "sessionId" | "sessionClientPublicKeyB64" | "sessionServerPublicKeyB64" | "createdAt"
->;
+// The record's plaintext fields a table writer could otherwise swap or edit (the client key
+// authenticates the session, createdAt sets its expiry). createdAt is epoch ms, as the Mongo
+// Date was, so records copied by scripts/migrate-sessions.ts keep decrypting.
+interface BoundFields {
+  sessionId: string;
+  sessionClientPublicKeyB64: string;
+  sessionServerPublicKeyB64: string;
+  createdAt: number;
+}
 
 // The AAD binds each blob to its field and to the record's plaintext fields: changing any of
 // them, or moving a blob to another session or field, fails decryption.
@@ -36,45 +33,15 @@ const aad = (record: BoundFields, field: string) =>
     record.sessionId,
     record.sessionClientPublicKeyB64,
     record.sessionServerPublicKeyB64,
-    record.createdAt.getTime(),
+    record.createdAt,
   ]);
 const encrypt = (record: BoundFields, field: string, value: string | Uint8Array) =>
-  new Binary(aead.encrypt(value, aad(record, field)));
-const decrypt = (record: BoundFields, field: string, blob: Binary) =>
-  aead.decrypt(blob.value(), aad(record, field));
+  aead.encrypt(value, aad(record, field));
+const decrypt = (record: BoundFields, field: string, blob: Uint8Array | undefined) =>
+  aead.decrypt(blob ?? new Uint8Array(), aad(record, field));
 
-export async function connectDB() {
-  if (!db) {
-    await client.connect();
-    const sessions = client.db(DB_NAME).collection(DB_ENCLAVE_COLLECTION);
-    await Promise.all([
-      sessions.createIndex({ sessionId: 1 }, { unique: true }),
-      // Mongo's TTL monitor deletes expired session records (incl. encrypted private keys).
-      sessions.createIndex({ createdAt: 1 }, { expireAfterSeconds: SESSION_TTL_SECONDS }),
-    ]);
-    db = client.db(DB_NAME);
-
-    // getSession() looks sessions up by sessionId on every public-key/decrypt
-    // call; without an index that is a full collection scan. Idempotent, and
-    // not awaited: a failed build only costs speed, so log it and keep serving.
-    db.collection(DB_ENCLAVE_COLLECTION)
-      .createIndex({ sessionId: 1 }, { unique: true })
-      .catch((error) => getLogger().error({ error: String(error) }, "sessionId index failed"));
-  }
-
-  return db;
-}
-
-export interface SessionRecordDocument {
-  sessionId: string;
-  sessionClientPublicKeyB64: string;
-  sessionServerPublicKeyB64: string;
-  sessionServerPrivateKeyEnc: Binary;
-  sessionServerJwtChainEnc: Binary;
-  allowedAudienceRootsEnc: Binary;
-  createdAt: Date;
-}
-
+// Item: the bound fields (S, createdAt N), three AES-GCM blobs (B) and expiresAt (N, epoch
+// seconds) for the table's TTL, which only deletes within ~48h: getSession() checks expiry itself.
 export const storeSession = traced(
   "db.storeSession",
   async (
@@ -84,33 +51,44 @@ export const storeSession = traced(
     sessionServerJwtChain: string,
     allowedAudienceRoots: string[],
   ) => {
-    const db = await connectDB();
-
     const bound: BoundFields = {
       sessionId,
       sessionClientPublicKeyB64,
       sessionServerPublicKeyB64: Buffer.from(sessionServerKeyPair.publicKey).toString("base64url"),
-      createdAt: new Date(),
+      createdAt: Date.now(),
     };
 
-    const record: SessionRecordDocument = {
-      ...bound,
-      sessionServerPrivateKeyEnc: encrypt(bound, "privateKey", sessionServerKeyPair.secretKey),
-      sessionServerJwtChainEnc: encrypt(bound, "jwtChain", sessionServerJwtChain),
-      allowedAudienceRootsEnc: encrypt(
-        bound,
-        "allowedAudienceRoots",
-        JSON.stringify(allowedAudienceRoots),
-      ),
-    };
-
-    await db.collection(DB_ENCLAVE_COLLECTION).insertOne(record);
+    await client.send(
+      new PutItemCommand({
+        TableName: DYNAMODB_SESSIONS_TABLE,
+        Item: {
+          sessionId: { S: sessionId },
+          sessionClientPublicKeyB64: { S: bound.sessionClientPublicKeyB64 },
+          sessionServerPublicKeyB64: { S: bound.sessionServerPublicKeyB64 },
+          createdAt: { N: String(bound.createdAt) },
+          expiresAt: { N: String(Math.ceil(bound.createdAt / 1000) + SESSION_TTL_SECONDS) },
+          sessionServerPrivateKeyEnc: {
+            B: encrypt(bound, "privateKey", sessionServerKeyPair.secretKey),
+          },
+          sessionServerJwtChainEnc: { B: encrypt(bound, "jwtChain", sessionServerJwtChain) },
+          allowedAudienceRootsEnc: {
+            B: encrypt(bound, "allowedAudienceRoots", JSON.stringify(allowedAudienceRoots)),
+          },
+        },
+        // Like the old unique index: never overwrite an existing session.
+        ConditionExpression: "attribute_not_exists(sessionId)",
+      }),
+    );
   },
 );
 
 export const deleteSession = traced("db.deleteSession", async (sessionId: string) => {
-  const db = await connectDB();
-  await db.collection(DB_ENCLAVE_COLLECTION).deleteOne({ sessionId });
+  await client.send(
+    new DeleteItemCommand({
+      TableName: DYNAMODB_SESSIONS_TABLE,
+      Key: { sessionId: { S: sessionId } },
+    }),
+  );
 });
 
 export interface Session {
@@ -125,30 +103,39 @@ export interface Session {
 export const getSession = traced(
   "db.getSession",
   async (sessionId: string): Promise<Session | null> => {
-    const db = await connectDB();
+    const { Item } = await client.send(
+      new GetItemCommand({
+        TableName: DYNAMODB_SESSIONS_TABLE,
+        Key: { sessionId: { S: sessionId } },
+        ConsistentRead: true,
+      }),
+    );
 
-    const session = await db
-      .collection<SessionRecordDocument>(DB_ENCLAVE_COLLECTION)
-      .findOne({ sessionId });
-
-    // The TTL monitor runs ~every 60s, so also reject expired records (and legacy ones without createdAt).
-    const expiresAt = (session?.createdAt?.getTime() ?? 0) + SESSION_TTL_SECONDS * 1000;
-    if (!session || expiresAt < Date.now()) {
+    // TTL deletion lags by up to ~48h, so reject expired records here (from the bound createdAt).
+    const createdAt = Number(Item?.createdAt?.N ?? 0);
+    if (!Item || createdAt + SESSION_TTL_SECONDS * 1000 < Date.now()) {
       return null;
     }
+
+    const bound: BoundFields = {
+      sessionId,
+      sessionClientPublicKeyB64: Item.sessionClientPublicKeyB64?.S ?? "",
+      sessionServerPublicKeyB64: Item.sessionServerPublicKeyB64?.S ?? "",
+      createdAt,
+    };
 
     return {
       id: sessionId,
       allowedAudienceRoots: JSON.parse(
-        decrypt(session, "allowedAudienceRoots", session.allowedAudienceRootsEnc).toString(),
+        decrypt(bound, "allowedAudienceRoots", Item.allowedAudienceRootsEnc?.B).toString(),
       ),
-      sessionClientPublicKey: Buffer.from(session.sessionClientPublicKeyB64, "base64url"),
-      sessionServerPrivateKey: decrypt(session, "privateKey", session.sessionServerPrivateKeyEnc),
-      sessionServerPublicKey: Buffer.from(session.sessionServerPublicKeyB64, "base64url"),
+      sessionClientPublicKey: Buffer.from(bound.sessionClientPublicKeyB64, "base64url"),
+      sessionServerPrivateKey: decrypt(bound, "privateKey", Item.sessionServerPrivateKeyEnc?.B),
+      sessionServerPublicKey: Buffer.from(bound.sessionServerPublicKeyB64, "base64url"),
       sessionServerJwtChain: decrypt(
-        session,
+        bound,
         "jwtChain",
-        session.sessionServerJwtChainEnc,
+        Item.sessionServerJwtChainEnc?.B,
       ).toString(),
     };
   },

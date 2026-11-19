@@ -207,7 +207,7 @@ app.use(
     res: Response,
     _next: NextFunction,
   ) => {
-    // Log everything, but never leak internals (AWS/KMS/Mongo messages) to the client.
+    // Log everything, but never leak internals (AWS/KMS/DynamoDB messages) to the client.
     writeLog("error", { error: err instanceof Error ? err.message : String(err) });
     // body-parser client errors (413 too large, 400 bad JSON) are marked safe to expose.
     if (err.expose && err.status) {

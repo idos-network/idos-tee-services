@@ -125,7 +125,7 @@ app.all(
 );
 
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  // Log everything, but never leak internals (AWS/KMS/Mongo messages) to the client.
+  // Log everything, but never leak internals (AWS/KMS/DynamoDB messages) to the client.
   writeLog("error", { error: err instanceof Error ? err.message : String(err) });
   return res.status(500).json({ error: "Internal server error" });
 });

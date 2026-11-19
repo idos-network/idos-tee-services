@@ -30,9 +30,10 @@ if false; then #SSH#
   setup_ssh "${SSH_PUBLIC_KEY:-}"
 fi
 
-# Add mongo host to /etc/hosts
-# TODO: Solve this in configuration
-echo "127.0.0.1 $(echo "$MONGO_HOST" | sed 's#-cluster.cluster-#-cluster.#')" | tee -a /etc/hosts
+# Mongo is only still there for the one-off session migration below; drop with it.
+if [ -n "${MONGO_HOST:-}" ]; then
+  echo "127.0.0.1 $(echo "$MONGO_HOST" | sed 's#-cluster.cluster-#-cluster.#')" | tee -a /etc/hosts
+fi
 
 # NBD
 source "$SCRIPT_DIR/shared/nbd.ash"
@@ -66,6 +67,13 @@ source "$SCRIPT_DIR/shared/clock.ash"
 setup_clock_sync
 
 export HOME=/app
+
+# One-off: copy live sessions from Mongo to DynamoDB (scripts/migrate-sessions.ts). Sessions
+# live an hour, so a failed copy only makes clients open new ones: log it and boot anyway.
+if [ -n "${MONGO_URI:-}" ]; then
+  (cd /app/enclave-service && node scripts/migrate-sessions.ts) \
+    || echo "⚠️ Session migration from Mongo failed, continuing without it"
+fi
 
 # node directly, not `npm start`: s6-supervise signals its direct child, and an
 # npm wrapper would leak the node process on restart and keep holding the port.

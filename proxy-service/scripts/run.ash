@@ -30,10 +30,6 @@ if false; then #SSH#
   setup_ssh "$SSH_PUBLIC_KEY"
 fi
 
-# Add mongo host to /etc/hosts
-# TODO: Solve this in configuration
-echo "127.0.0.1 $(echo "$MONGO_HOST" | sed 's#-cluster.cluster-#-cluster.#')" | tee -a /etc/hosts
-
 # NBD
 source "$SCRIPT_DIR/shared/nbd.ash"
 setup_nbd "proxy"

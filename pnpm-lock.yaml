@@ -20,6 +20,9 @@ importers:
 
   enclave-service:
     dependencies:
+      '@aws-sdk/client-dynamodb':
+        specifier: ^3.1171.0
+        version: 3.1171.0
       '@aws-sdk/credential-providers':
         specifier: ^3.1169.0
         version: 3.1169.0
@@ -364,6 +367,9 @@ importers:
 
   proxy-service:
     dependencies:
+      '@aws-sdk/client-dynamodb':
+        specifier: ^3.1171.0
+        version: 3.1171.0
       '@aws-sdk/credential-providers':
         specifier: ^3.1169.0
         version: 3.1169.0
@@ -394,9 +400,6 @@ importers:
       jose:
         specifier: ^6.2.8
         version: 6.2.8
-      mongodb:
-        specifier: ^7.5.0
-        version: 7.5.0(@aws-sdk/credential-providers@3.1169.0)(mongodb-client-encryption@7.2.1)(socks@2.8.9)
       path-to-regexp:
         specifier: 8.4.2
         version: 8.4.2
@@ -450,6 +453,10 @@ packages:
     resolution: {integrity: sha512-OHlfkNzDFjYnwNPABhwAkDTUi0HPjfsKUHJDR0bSMORpCXNzRpInPCNCIT08xKDhjaPlcLJ+2Av+Sk7hHnuC8A==}
     engines: {node: '>=20.0.0'}
 
+  '@aws-sdk/client-dynamodb@3.1171.0':
+    resolution: {integrity: sha512-zCRMytp/eL7K9nxw+5L1pNMjlWsF5GuMSBb1mmAqUYv1yqemOHD4SDeViYD4Rl8L3yiBfbvSg+rzuMLA++ioDw==}
+    engines: {node: '>=20.0.0'}
+
   '@aws-sdk/client-kms@3.1169.0':
     resolution: {integrity: sha512-wkki8YnsO6p7xX7bdb2Sg3qUhygHQ/Sks/DzSCRL4t99vI85P/CLsD1imEVIz9ma2N0iMyW5xVqJYTwnayaLHQ==}
     engines: {node: '>=20.0.0'}
@@ -500,6 +507,18 @@ packages:
 
   '@aws-sdk/credential-providers@3.1169.0':
     resolution: {integrity: sha512-h0XUi8WPjxYEh5kyHM/CpP3E3kkmCf4BSjXCm6il4l3pkux+8ISC+ridNsB+zcFQPfpwbVLzaHdJ1hZ75XuFdg==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/dynamodb-codec@3.973.58':
+    resolution: {integrity: sha512-OrqMNzvjk37ssH/qoD6Cd25TLk2cT1lCMwCNM+frwbOQAKJuAbFSgH6OOtaI71l5fA8F7GPuMr9Ck57SAtY98g==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/endpoint-cache@3.972.11':
+    resolution: {integrity: sha512-8q1ICxcDjHId3bBryuu/j+1L9y5/3uQnwzLDt5j2ElcjZSoWmFtymdJy7OjLrluSMe0Z4mq5bcH4fxBXvlEHfw==}
+    engines: {node: '>=20.0.0'}
+
+  '@aws-sdk/middleware-endpoint-discovery@3.972.39':
+    resolution: {integrity: sha512-AtZS+UK7CciPbdiszPoG08A23kUojFxFnWIv155uPieSPcHR9D9Sovtp19U0j5qmD2DzHpG9OI7mb0Kiyvf3mA==}
     engines: {node: '>=20.0.0'}
 
   '@aws-sdk/middleware-sdk-s3@3.972.89':
@@ -1902,6 +1921,9 @@ packages:
   mkdirp-classic@0.5.3:
     resolution: {integrity: sha512-gKLcREMhtuZRwRAfqP3RFW+TK4JqApVBtOIftVgjuABpAtpxhPGaDcfvbhNvD0B8iD1oUr/txX35NjcaY6Ns/A==}
 
+  mnemonist@0.38.3:
+    resolution: {integrity: sha512-2K9QYubXx/NAjv4VLq1d1Ly8pWNC5L3BrixtdkyTegXWJIqY+zLNDhhX/A+ZwWt70tB1S8H4BE8FLYEFyNoOBw==}
+
   mongodb-client-encryption@7.2.1:
     resolution: {integrity: sha512-22N0jk04BFKMvuRNsxts+j5YnbyemV/UPJNp+q55BT0EcTVvoo/ASK71seW300/ryITzyow830HLTsQo0sYf2g==}
     engines: {node: '>=20.19.0'}
@@ -1989,6 +2011,9 @@ packages:
   object-inspect@1.13.4:
     resolution: {integrity: sha512-W67iLl4J2EXEGTbfeHCffrjDfitvLANg0UlX3wFUUSTx92KXRFegMHUVgSqE+wvhAbi4WqjGg9czysTV2Epbew==}
     engines: {node: '>= 0.4'}
+
+  obliterator@1.6.1:
+    resolution: {integrity: sha512-9WXswnqINnnhOG/5SLimUlzuU1hFJUc8zkwyD59Sd+dPOMf05PmnYG/d6Q7HZ+KmgkZJa1PxRso6QdM3sTNHig==}
 
   obug@2.2.1:
     resolution: {integrity: sha512-XrsrhT5sybtKI6wakr2SPOlGZWWYbUXZ7a0jT8/QOeAPau+1X/bSegNe5YR75oJmEZQbKningirmGOEJCIk61Q==}
@@ -2560,6 +2585,19 @@ snapshots:
       '@smithy/types': 4.20.0
       tslib: 2.9.1
 
+  '@aws-sdk/client-dynamodb@3.1171.0':
+    dependencies:
+      '@aws-sdk/core': 3.981.0
+      '@aws-sdk/credential-provider-node': 3.972.97
+      '@aws-sdk/dynamodb-codec': 3.973.58
+      '@aws-sdk/middleware-endpoint-discovery': 3.972.39
+      '@aws-sdk/types': 3.975.1
+      '@smithy/core': 3.40.0
+      '@smithy/fetch-http-handler': 5.8.1
+      '@smithy/node-http-handler': 4.14.2
+      '@smithy/types': 4.20.0
+      tslib: 2.9.1
+
   '@aws-sdk/client-kms@3.1169.0':
     dependencies:
       '@aws-sdk/core': 3.981.0
@@ -2706,6 +2744,26 @@ snapshots:
       '@smithy/credential-provider-imds': 4.5.2
       '@smithy/types': 4.20.0
       tslib: 2.8.1
+
+  '@aws-sdk/dynamodb-codec@3.973.58':
+    dependencies:
+      '@aws-sdk/core': 3.981.0
+      '@smithy/core': 3.40.0
+      '@smithy/types': 4.20.0
+      tslib: 2.9.1
+
+  '@aws-sdk/endpoint-cache@3.972.11':
+    dependencies:
+      mnemonist: 0.38.3
+      tslib: 2.9.1
+
+  '@aws-sdk/middleware-endpoint-discovery@3.972.39':
+    dependencies:
+      '@aws-sdk/endpoint-cache': 3.972.11
+      '@aws-sdk/types': 3.975.1
+      '@smithy/core': 3.40.0
+      '@smithy/types': 4.20.0
+      tslib: 2.9.1
 
   '@aws-sdk/middleware-sdk-s3@3.972.89':
     dependencies:
@@ -3964,6 +4022,10 @@ snapshots:
 
   mkdirp-classic@0.5.3: {}
 
+  mnemonist@0.38.3:
+    dependencies:
+      obliterator: 1.6.1
+
   mongodb-client-encryption@7.2.1:
     dependencies:
       node-addon-api: 8.8.0
@@ -4032,6 +4094,8 @@ snapshots:
   object-assign@4.1.1: {}
 
   object-inspect@1.13.4: {}
+
+  obliterator@1.6.1: {}
 
   obug@2.2.1: {}
 

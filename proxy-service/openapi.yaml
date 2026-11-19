@@ -103,7 +103,7 @@ paths:
       summary: Arm the proxy for a host
       description: |
         Stores the host public key, vendor, vendor credentials, environment and
-        allowlist as one field-level encrypted blob in Mongo and returns the
+        allowlist as one field-level encrypted blob in DynamoDB and returns the
         armed `id` used in `/proxy/{id}/...`.
       operationId: arm
       security:

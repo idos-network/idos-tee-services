@@ -134,6 +134,13 @@ There is no migration from mongodb FLE: drop the `enclave.idOSEnclave` sessions 
 `enclaveEncryption` database when deploying. Losing
 `fle_master_key.enc` (or the FLE KMS key) makes all stored sessions unreadable.
 
+Sessions (enclave-service) and armed records (proxy-service) live in DynamoDB tables named by
+`DYNAMODB_SESSIONS_TABLE` / `DYNAMODB_ARMED_TABLE` in each `config.env`, with the same AES-GCM
+blobs. While `enclave/config.env` still sets `MONGO_URI`, enclave boot copies the live (< 1 h)
+Mongo sessions into DynamoDB first (`enclave-service/scripts/migrate-sessions.ts`); armed
+records are not migrated. Both services need a `dynamodb.<region>.amazonaws.com` entry in
+their `vsock.json`.
+
 ### Attestation endpoint
 
 `GET /attestation?nonce=<base64url, up to 64 bytes>` returns `{ "attestation": <base64> }`,

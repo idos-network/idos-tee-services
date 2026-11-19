@@ -1,8 +1,6 @@
 // biome-ignore-all lint/style/noNonNullAssertion: This is ok
 export const GROUP_NAME = "proxy-service";
-export const MONGO_URI = process.env.MONGO_URI!;
-export const DB_ARMED_COLLECTION = "idOSProxyArmed";
-export const DB_NAME = "proxy";
+export const DYNAMODB_ARMED_TABLE = process.env.DYNAMODB_ARMED_TABLE!;
 // base64, 96 bytes: master key the armed-record AES key is derived from, see scripts/run.ash
 export const FLE_MASTER_KEY = process.env.FLE_MASTER_KEY!;
 // Bearer tokens allowed to call POST /arm (comma separated in config.env).

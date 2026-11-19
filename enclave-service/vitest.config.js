@@ -6,7 +6,7 @@ export default defineConfig({
     setupFiles: ["./tests/setup.ts"],
     env: {
       NODE_ENV: "test",
-      MONGO_URI: "mongodb://localhost:27017",
+      DYNAMODB_SESSIONS_TABLE: "test-sessions",
       AWS_REGION: "eu-central-1",
       FLE_MASTER_KEY: Buffer.alloc(96).toString("base64"),
       SESSION_TOKENS: "session-token-one, session-token-two",
