@@ -12,6 +12,10 @@ S6_LOGDIR=${S6_LOGDIR:-/mnt/encrypted/logs}
 S6_RESTART_DELAY=${S6_RESTART_DELAY:-5}
 S6_FINISH_TIMEOUT=${S6_FINISH_TIMEOUT:-10000}
 
+# `1` copies every log line to `nitro-cli console`; set it empty to skip that.
+# `-` not `:-`, so an explicit empty value is kept rather than defaulted back.
+S6_LOG_CONSOLE=${S6_LOG_CONSOLE-1}
+
 # s6_service <name> <command line>
 # <name> is also the logdir name and the `component` label vector derives.
 s6_service() {
@@ -35,13 +39,13 @@ s6_service() {
   # pino writes stdout synchronously, so blocking there would fill the 64KB
   # pipe and stall the node event loop. Losing log lines is the cheaper
   # failure - the same trade-off as vector dying costing logs, not the service.
-  # Trailing `1` also copies each line to stdout, i.e. `nitro-cli console`.
-  # `t` prefixes each line with a TAI64N stamp so no two log files start with
+  # Trailing $S6_LOG_CONSOLE (`1`) also copies each line to stdout, i.e.
+  # `nitro-cli console`. `t` prefixes each line with a TAI64N stamp so no two log files start with
   # the same bytes - FaceTec opens every boot with a constant banner, which made
   # vector's checksum fingerprint of `current` collide with the previous boot's
   # @*.u archive and share its checkpoint. vector.yaml strips the stamp again.
-  printf '#!/bin/bash\nexec s6-log t n10 s10000000 %s/%s 1\n' \
-    "$S6_LOGDIR" "$name" > "$S6_SCANDIR/$name/log/run"
+  printf '#!/bin/bash\nexec s6-log t n10 s10000000 %s/%s %s\n' \
+    "$S6_LOGDIR" "$name" "$S6_LOG_CONSOLE" > "$S6_SCANDIR/$name/log/run"
 
   # Without this s6-supervise restarts a dead service in ~1s. The vector
   # supervision this replaced waited 5s, and a deterministic boot failure
