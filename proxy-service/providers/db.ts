@@ -15,7 +15,10 @@ if (!DYNAMODB_ARMED_TABLE) throw new Error("DYNAMODB_ARMED_TABLE is not set");
 
 // Region and credentials from the SDK defaults (AWS_REGION, instance role via IMDS). The SDK
 // sets no timeouts: without them a stalled vsock connection hangs the request and is never retried.
+// accountIdEndpointMode off: only dynamodb.<region>.amazonaws.com is mapped through vsock, never
+// the <account>.ddb.<region> endpoint the SDK would pick if the credentials carried an account ID.
 const client = new DynamoDBClient({
+  accountIdEndpointMode: "disabled",
   requestHandler: { connectionTimeout: 1_000, requestTimeout: 3_000 },
 });
 

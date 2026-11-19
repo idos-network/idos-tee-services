@@ -25,7 +25,8 @@ interface MongoSession {
 
 // biome-ignore lint/style/noNonNullAssertion: run.ash only runs this with MONGO_URI set
 const mongo = new MongoClient(process.env.MONGO_URI!);
-const dynamo = new DynamoDBClient({});
+// Same endpoint as providers/db.ts: only dynamodb.<region> is mapped through vsock.
+const dynamo = new DynamoDBClient({ accountIdEndpointMode: "disabled" });
 
 try {
   const since = new Date(Date.now() - SESSION_TTL_SECONDS * 1000);
