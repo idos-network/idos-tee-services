@@ -10,8 +10,14 @@ import { traced } from "@idos/tee-common/telemetry.ts";
 import { DYNAMODB_ARMED_TABLE, FLE_MASTER_KEY } from "../env.ts";
 import type { ArmRequest } from "../utils/dto.ts";
 
-// Region and credentials from the SDK defaults (AWS_REGION, instance role via IMDS).
-const client = new DynamoDBClient({});
+// Fail at boot, not on the first request, like the master key check below.
+if (!DYNAMODB_ARMED_TABLE) throw new Error("DYNAMODB_ARMED_TABLE is not set");
+
+// Region and credentials from the SDK defaults (AWS_REGION, instance role via IMDS). The SDK
+// sets no timeouts: without them a stalled vsock connection hangs the request and is never retried.
+const client = new DynamoDBClient({
+  requestHandler: { connectionTimeout: 1_000, requestTimeout: 3_000 },
+});
 
 // Key derived from the master key, which scripts/run.ash decrypts with attestation.
 const aead = createAesGcm(FLE_MASTER_KEY, "proxy-armed-v1");

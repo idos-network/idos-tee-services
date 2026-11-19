@@ -9,34 +9,8 @@ const h = vi.hoisted(() => ({ items: new Map<string, Item>() }));
 
 vi.mock("@aws-sdk/client-dynamodb", async (importOriginal) => {
   const real = await importOriginal<typeof import("@aws-sdk/client-dynamodb")>();
-  const conditionFailed = () =>
-    new real.ConditionalCheckFailedException({ message: "condition failed", $metadata: {} });
-
-  class DynamoDBClient {
-    async send(command: { input: { Key?: Item; Item?: Item; ConditionExpression?: string } }) {
-      const { input } = command;
-      const id = (input.Key ?? input.Item)?.armedId?.S as string;
-      const exists = h.items.has(id);
-      if (command instanceof real.PutItemCommand) {
-        if (input.ConditionExpression?.includes("attribute_not_exists") && exists) {
-          throw conditionFailed();
-        }
-        h.items.set(id, input.Item as Item);
-        return {};
-      }
-      if (command instanceof real.GetItemCommand) return { Item: h.items.get(id) };
-      if (command instanceof real.DeleteItemCommand) {
-        if (input.ConditionExpression?.includes("attribute_exists") && !exists) {
-          throw conditionFailed();
-        }
-        h.items.delete(id);
-        return {};
-      }
-      throw new Error("unexpected command");
-    }
-  }
-
-  return { ...real, DynamoDBClient };
+  const { fakeDynamoDBClient } = await import("@idos/tee-common/dynamodb-fake.ts");
+  return { ...real, DynamoDBClient: fakeDynamoDBClient(real, "armedId", h.items) };
 });
 
 const { deleteArmed, getArmed, storeArmed } = await import("../providers/db.ts");

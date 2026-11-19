@@ -1,7 +1,7 @@
 import type { AttributeValue } from "@aws-sdk/client-dynamodb";
 import { createAesGcm } from "@idos/tee-common/aes-gcm.ts";
 import { Binary } from "mongodb";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { keyPair } from "../providers/box.ts";
 
 type Item = Record<string, AttributeValue>;
@@ -15,28 +15,8 @@ const h = vi.hoisted(() => ({
 
 vi.mock("@aws-sdk/client-dynamodb", async (importOriginal) => {
   const real = await importOriginal<typeof import("@aws-sdk/client-dynamodb")>();
-
-  class DynamoDBClient {
-    async send(command: { input: { Key?: Item; Item?: Item; ConditionExpression?: string } }) {
-      const { input } = command;
-      const id = (input.Key ?? input.Item)?.sessionId?.S as string;
-      if (command instanceof real.PutItemCommand) {
-        if (input.ConditionExpression?.includes("attribute_not_exists") && h.items.has(id)) {
-          throw new real.ConditionalCheckFailedException({ message: "condition", $metadata: {} });
-        }
-        h.items.set(id, input.Item as Item);
-        return {};
-      }
-      if (command instanceof real.GetItemCommand) return { Item: h.items.get(id) };
-      if (command instanceof real.DeleteItemCommand) {
-        h.items.delete(id);
-        return {};
-      }
-      throw new Error("unexpected command");
-    }
-  }
-
-  return { ...real, DynamoDBClient };
+  const { fakeDynamoDBClient } = await import("@idos/tee-common/dynamodb-fake.ts");
+  return { ...real, DynamoDBClient: fakeDynamoDBClient(real, "sessionId", h.items) };
 });
 
 vi.mock("mongodb", async (importOriginal) => ({
@@ -186,7 +166,12 @@ describe("scripts/migrate-sessions.ts", () => {
   }
 
   it("copies live Mongo sessions so the new provider decrypts them, and is idempotent", async () => {
+    const originalMongoUri = process.env.MONGO_URI;
     process.env.MONGO_URI = "mongodb://localhost:27017";
+    onTestFinished(() => {
+      process.env.MONGO_URI = originalMongoUri;
+      h.mongoDocs.length = 0;
+    });
     const pair = keyPair();
     h.mongoDocs.push(
       mongoSession("m-live", new Date(Date.now() - 60_000), pair),
