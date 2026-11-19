@@ -4,16 +4,19 @@ import { keyPair } from "../providers/box.ts";
 
 type Item = Record<string, AttributeValue>;
 
-// In-memory DynamoDB table keyed by sessionId, so blobs can be inspected and swapped between records.
+// In-memory DynamoDB table keyed by sessionId, so blobs can be inspected and swapped between
+// records; scans come back 2 items a page to exercise the purge's paging.
 const h = vi.hoisted(() => ({ items: new Map<string, Item>() }));
 
 vi.mock("@aws-sdk/client-dynamodb", async (importOriginal) => {
   const real = await importOriginal<typeof import("@aws-sdk/client-dynamodb")>();
   const { fakeDynamoDBClient } = await import("@idos/tee-common/dynamodb-fake.ts");
-  return { ...real, DynamoDBClient: fakeDynamoDBClient(real, "sessionId", h.items) };
+  return { ...real, DynamoDBClient: fakeDynamoDBClient(real, "sessionId", h.items, 2) };
 });
 
-const { deleteSession, getSession, storeSession } = await import("../providers/db.ts");
+const { deleteSession, getSession, purgeExpiredSessions, storeSession } = await import(
+  "../providers/db.ts"
+);
 
 const store = (id: string, pair = keyPair()) =>
   storeSession(id, pair, "client-pub", "jwt.chain.secret", ["https://aud.example"]);
@@ -59,6 +62,22 @@ describe("session records in DynamoDB", () => {
     }
 
     expect(await getSession("s-old")).toBeNull();
+  });
+
+  it("purges every expired session across scan pages and keeps live ones", async () => {
+    h.items.clear();
+    // Two minutes past expiry: expiresAt is whole seconds, rounded up.
+    vi.useFakeTimers({ now: Date.now() - 3720_000 });
+    try {
+      for (const id of ["old-1", "old-2", "old-3"]) await store(id);
+    } finally {
+      vi.useRealTimers();
+    }
+    for (const id of ["live-1", "live-2"]) await store(id);
+
+    expect(await purgeExpiredSessions()).toBe(3);
+    expect([...h.items.keys()].sort()).toEqual(["live-1", "live-2"]);
+    expect(await purgeExpiredSessions()).toBe(0);
   });
 
   it("deletes a session", async () => {

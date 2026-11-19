@@ -1,8 +1,10 @@
 import {
+  type AttributeValue,
   DeleteItemCommand,
   DynamoDBClient,
   GetItemCommand,
   PutItemCommand,
+  ScanCommand,
 } from "@aws-sdk/client-dynamodb";
 import { createAesGcm } from "@idos/tee-common/aes-gcm.ts";
 import { traced } from "@idos/tee-common/telemetry.ts";
@@ -149,3 +151,34 @@ export const getSession = traced(
     };
   },
 );
+
+/**
+ * Deletes every session past its expiresAt; returns how many. The table's TTL only deletes
+ * within ~48h, and expired records hold encrypted private keys. Run by index.ts every 30 min.
+ * Nothing is decrypted, and deleting an item that is already gone is a no-op.
+ */
+export const purgeExpiredSessions = traced("db.purgeExpiredSessions", async () => {
+  const now = { ":now": { N: String(Math.floor(Date.now() / 1000)) } };
+  let deleted = 0;
+  let startKey: Record<string, AttributeValue> | undefined;
+  do {
+    const page = await client.send(
+      new ScanCommand({
+        TableName: DYNAMODB_SESSIONS_TABLE,
+        ProjectionExpression: "sessionId",
+        FilterExpression: "expiresAt < :now",
+        ExpressionAttributeValues: now,
+        ExclusiveStartKey: startKey,
+      }),
+    );
+    for (const { sessionId } of page.Items ?? []) {
+      if (!sessionId) continue;
+      await client.send(
+        new DeleteItemCommand({ TableName: DYNAMODB_SESSIONS_TABLE, Key: { sessionId } }),
+      );
+      deleted++;
+    }
+    startKey = page.LastEvaluatedKey;
+  } while (startKey);
+  return deleted;
+});

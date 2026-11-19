@@ -55,4 +55,18 @@ if (cluster.isPrimary) {
   // Imported only in workers: it reads the secrets.
   const { default: app } = await import("./server.ts");
   startServer(app);
+
+  // One worker purges expired sessions, at boot and every 30 min (DynamoDB TTL lags up to ~48h).
+  // A dead worker restarts the whole service, so worker 1 is always there.
+  if (cluster.worker?.id === 1) {
+    const { purgeExpiredSessions } = await import("./providers/db.ts");
+    const { getLogger } = await import("@idos/tee-common/logger.ts");
+    const purge = () =>
+      purgeExpiredSessions().then(
+        (deleted) => getLogger().info({ deleted }, "expired sessions purged"),
+        (error) => getLogger().error({ error: String(error) }, "session purge failed"),
+      );
+    purge();
+    setInterval(purge, 30 * 60 * 1000).unref();
+  }
 }

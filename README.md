@@ -135,6 +135,9 @@ Losing `fle_master_key.enc` (or the FLE KMS key) makes all stored sessions unrea
 Sessions (enclave-service) and armed records (proxy-service) live in DynamoDB tables named by
 `DYNAMODB_SESSIONS_TABLE` / `DYNAMODB_ARMED_TABLE` in each `config.env`; neither service uses
 Mongo any more. Both need a `dynamodb.<region>.amazonaws.com` entry in their `vsock.json`.
+DynamoDB TTL deletes expired sessions only within ~48h, so one enclave worker also deletes
+every session past its `expiresAt` at boot and every 30 min (`purgeExpiredSessions`); the
+enclave role needs `dynamodb:Scan` on the sessions table for it.
 The old `enclave.idOSEnclave`, `enclaveEncryption` and `proxy.idOSProxyArmed` Mongo data can
 be dropped, and `MONGO_URI` / `MONGO_HOST` removed from `enclave/config.env` and `proxy/config.env`.
 
