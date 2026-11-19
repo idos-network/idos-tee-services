@@ -14,7 +14,9 @@ const mocks = vi.hoisted(() => {
     storeArmed: vi.fn(async (id: string, data: ArmRequest) => {
       armed.set(id, data);
     }),
-    deleteArmed: vi.fn(async (id: string) => armed.delete(id)),
+    deleteArmed: vi.fn(async (id: string) => {
+      armed.delete(id);
+    }),
     getArmed: vi.fn(async (id: string): Promise<Armed | null> => {
       const stored = armed.get(id);
       if (!stored) return null;

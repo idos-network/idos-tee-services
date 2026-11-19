@@ -37,4 +37,8 @@ export const ArmRequestSchema = z.discriminatedUnion("api", [
 
 export type ArmRequest = z.infer<typeof ArmRequestSchema>;
 
+// Armed ids are server-generated randomUUID()s; checking the shape answers 404 without a
+// DynamoDB call, and keeps over-long ids from becoming a DynamoDB key error (500).
+export const isArmedId = (id: string) => z.uuid().safeParse(id).success;
+
 export const AttestationQuerySchema = z.object({ nonce: z.base64url().max(86).optional() });

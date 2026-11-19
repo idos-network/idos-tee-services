@@ -15,7 +15,12 @@ import { actions } from "./providers/counters.ts";
 import { type Armed, deleteArmed, storeArmed } from "./providers/db.ts";
 import { forward, isAllowed, resolveUpstreamUrl } from "./providers/proxy.ts";
 import { vendors } from "./providers/vendors/index.ts";
-import { type ArmRequest, ArmRequestSchema, AttestationQuerySchema } from "./utils/dto.ts";
+import {
+  type ArmRequest,
+  ArmRequestSchema,
+  AttestationQuerySchema,
+  isArmedId,
+} from "./utils/dto.ts";
 import { writeLog } from "./utils/logger-context.ts";
 
 const app: Express = express();
@@ -82,11 +87,12 @@ app.post(
 
 app.delete("/arm/:id", armTokenMiddleware(), async (req, res) => {
   const armedId = String(req.params.id);
-  const deleted = await deleteArmed(armedId);
-
-  if (!deleted) {
+  if (!isArmedId(armedId)) {
     return res.status(404).json({ error: "Armed id not found" });
   }
+
+  // Idempotent: an id that is already gone (or never existed) is disarmed too.
+  await deleteArmed(armedId);
 
   writeLog("disarmed", { armedId });
   return res.status(204).end();

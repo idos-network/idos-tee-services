@@ -39,15 +39,6 @@ describe("armed records in DynamoDB", () => {
     expect(armed).toEqual({ id: "id-2", ...armBody() });
   });
 
-  it("never overwrites an existing record", async () => {
-    await storeArmed("id-5", armBody());
-
-    await expect(storeArmed("id-5", armBody({ environment: "production" }))).rejects.toThrow(
-      /condition/,
-    );
-    expect(await getArmed("id-5")).toEqual({ id: "id-5", ...armBody() });
-  });
-
   it("rejects a blob copied from another record", async () => {
     await storeArmed("victim", armBody());
     await storeArmed("attacker", armBody({ environment: "production" }));
@@ -66,12 +57,12 @@ describe("armed records in DynamoDB", () => {
     await expect(getArmed("id-4")).rejects.toThrow(/authenticate/);
   });
 
-  it("deletes a record and reports whether it existed", async () => {
+  it("deletes a record, and deleting it again succeeds", async () => {
     await storeArmed("id-3", armBody());
 
-    expect(await deleteArmed("id-3")).toBe(true);
+    await deleteArmed("id-3");
     expect(await getArmed("id-3")).toBeNull();
-    expect(await deleteArmed("id-3")).toBe(false);
+    await expect(deleteArmed("id-3")).resolves.toBeUndefined();
   });
 
   it.each([

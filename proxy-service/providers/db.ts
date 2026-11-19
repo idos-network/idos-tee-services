@@ -1,5 +1,4 @@
 import {
-  ConditionalCheckFailedException,
   DeleteItemCommand,
   DynamoDBClient,
   GetItemCommand,
@@ -19,7 +18,8 @@ if (!DYNAMODB_ARMED_TABLE) throw new Error("DYNAMODB_ARMED_TABLE is not set");
 // the <account>.ddb.<region> endpoint the SDK would pick if the credentials carried an account ID.
 const client = new DynamoDBClient({
   accountIdEndpointMode: "disabled",
-  requestHandler: { connectionTimeout: 1_000, requestTimeout: 3_000 },
+  // throwOnRequestTimeout: without it a request timeout only logs a warning and keeps waiting.
+  requestHandler: { connectionTimeout: 1_000, requestTimeout: 3_000, throwOnRequestTimeout: true },
 });
 
 // Key derived from the master key, which scripts/run.ash decrypts with attestation.
@@ -39,8 +39,8 @@ export const storeArmed = traced("db.storeArmed", async (armedId: string, data: 
         dataEnc: { B: aead.encrypt(JSON.stringify({ armedId, ...data })) },
         createdAt: { N: String(Date.now()) },
       },
-      // Like the old unique index: never overwrite an existing record.
-      ConditionExpression: "attribute_not_exists(armedId)",
+      // No attribute_not_exists: ids are random UUIDs, and an SDK retry of a put that landed
+      // would fail the condition and report a stored record as an error.
     }),
   );
 });
@@ -69,19 +69,9 @@ export const getArmed = traced("db.getArmed", async (armedId: string): Promise<A
   return { id: armedId, ...data };
 });
 
-/** True when a record was deleted, false when there was none. */
-export const deleteArmed = traced("db.deleteArmed", async (armedId: string): Promise<boolean> => {
-  try {
-    await client.send(
-      new DeleteItemCommand({
-        TableName: DYNAMODB_ARMED_TABLE,
-        Key: { armedId: { S: armedId } },
-        ConditionExpression: "attribute_exists(armedId)",
-      }),
-    );
-    return true;
-  } catch (error) {
-    if (error instanceof ConditionalCheckFailedException) return false;
-    throw error;
-  }
+/** Idempotent: deleting a missing record succeeds, so an SDK retry of a delete that landed does too. */
+export const deleteArmed = traced("db.deleteArmed", async (armedId: string) => {
+  await client.send(
+    new DeleteItemCommand({ TableName: DYNAMODB_ARMED_TABLE, Key: { armedId: { S: armedId } } }),
+  );
 });

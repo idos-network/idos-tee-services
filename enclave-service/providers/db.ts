@@ -18,7 +18,8 @@ if (!DYNAMODB_SESSIONS_TABLE) throw new Error("DYNAMODB_SESSIONS_TABLE is not se
 // the <account>.ddb.<region> endpoint the SDK would pick if the credentials carried an account ID.
 const client = new DynamoDBClient({
   accountIdEndpointMode: "disabled",
-  requestHandler: { connectionTimeout: 1_000, requestTimeout: 3_000 },
+  // throwOnRequestTimeout: without it a request timeout only logs a warning and keeps waiting.
+  requestHandler: { connectionTimeout: 1_000, requestTimeout: 3_000, throwOnRequestTimeout: true },
 });
 
 // Key derived from the master key, which scripts/run.ash decrypts with attestation.
@@ -84,8 +85,8 @@ export const storeSession = traced(
             B: encrypt(bound, "allowedAudienceRoots", JSON.stringify(allowedAudienceRoots)),
           },
         },
-        // Like the old unique index: never overwrite an existing session.
-        ConditionExpression: "attribute_not_exists(sessionId)",
+        // No attribute_not_exists: ids are random UUIDs, and an SDK retry of a put that landed
+        // would fail the condition and report a stored session as an error.
       }),
     );
   },

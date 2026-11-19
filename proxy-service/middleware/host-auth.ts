@@ -5,6 +5,7 @@ import type { RequestHandler } from "express";
 import { errors, importJWK, jwtVerify } from "jose";
 import { HOST_JWS_CLOCK_TOLERANCE, HOST_JWS_MAX_AGE } from "../env.ts";
 import { type Armed, getArmed } from "../providers/db.ts";
+import { isArmedId } from "../utils/dto.ts";
 import { writeLog } from "../utils/logger-context.ts";
 
 /** Path (with query) the host addressed on the vendor, i.e. everything after `/proxy/:id`. */
@@ -20,7 +21,7 @@ export function upstreamPath(url: string, armedId: string): string {
 export function hostAuthMiddleware(): RequestHandler {
   return async (req, res, next) => {
     const armedId = String(req.params.id);
-    const armed = await getArmed(armedId);
+    const armed = isArmedId(armedId) ? await getArmed(armedId) : null;
 
     if (!armed) {
       writeLog("proxy_armed_not_found", { armedId });

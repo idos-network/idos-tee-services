@@ -139,7 +139,9 @@ paths:
     delete:
       tags: [Arm]
       summary: Disarm
-      description: Deletes the armed record; later `/proxy/{id}/...` calls get 404.
+      description: |
+        Deletes the armed record; later `/proxy/{id}/...` calls get 404.
+        Idempotent: an id that is already disarmed (or never existed) also gets 204.
       operationId: disarm
       security:
         - armToken: []
@@ -161,7 +163,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "404":
-          description: Unknown armed id
+          description: The id is not a UUID
           content:
             application/json:
               schema:
