@@ -149,11 +149,6 @@ Rotate a vendor key by arming again and disarming the old id.
 
 ## Local run
 
-```bash
-pnpm install
-# Once: armed records stay encrypted under a key derived from this master key, so reuse it
-openssl rand -base64 96 | tr -d "\n" > .fle_master_key
-DYNAMODB_ARMED_TABLE=… AWS_REGION=… FLE_MASTER_KEY=$(cat .fle_master_key) ARM_TOKENS=dev-token pnpm start
-```
-
-`pnpm test` runs without DynamoDB or KMS (both mocked).
+The proxy only runs inside a Nitro Enclave: every KMS call carries the enclave's attestation
+(NSM addon), so outside one arming and reading records fail. `pnpm test` runs without DynamoDB,
+KMS or the NSM (all mocked).
