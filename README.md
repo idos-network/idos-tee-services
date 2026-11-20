@@ -227,14 +227,8 @@ data keys itself. Worth adding: a CloudTrail alert on armed-key `Decrypt` withou
 trust assumption above applies to `proxy/luks_entropy_password.enc` the same way.
 
 In `proxy/config.env`, rename `AWS_KMS_FLE_ARN` to `AWS_KMS_ARMED_ARN` (the same key ARN works);
-without it the proxy refuses to boot. Records armed before this change have no `dataKeyEnc` and
-read as missing (404): hosts arm them again.
-
-Keep `proxy/fle_master_key.enc`, and a key policy that still lets the old release decrypt it
-without an `armedId` context, until the rollback window closes:
-the previous release needs it to read records armed before this change, and without the object
-it would generate a new key and read nothing. Delete it only once rollback is off the table, or
-after a recoverable copy exists (bucket versioning / Object Lock).
+without it the proxy refuses to boot. The proxy never ran with the master key, so there are no
+records to migrate: delete `proxy/fle_master_key.enc` if it exists.
 
 ### Open decisions
 
