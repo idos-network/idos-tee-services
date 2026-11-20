@@ -8,7 +8,7 @@ export default defineConfig({
       NODE_ENV: "test",
       DYNAMODB_ARMED_TABLE: "test-armed",
       AWS_REGION: "eu-central-1",
-      FLE_MASTER_KEY: Buffer.alloc(96).toString("base64"),
+      AWS_KMS_FLE_ARN: "arn:aws:kms:eu-central-1:000000000000:key/test",
       ARM_TOKENS: "arm-token-one, arm-token-two",
     },
     coverage: {

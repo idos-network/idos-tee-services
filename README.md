@@ -61,7 +61,7 @@ terminates any running enclave and starts the new one via the service's
 is allowed to call. `POST /arm` (one of the `ARM_TOKENS` from `config.env` as bearer) stores a host
 Ed25519 public key, the vendor (`api: "iron" | "moonpay" | "persona" | "sumsub" | "kalshi"`) with its credentials (`auth`), the
 vendor `environment` (`production` | `sandbox`, mapped to a vendor origin baked into the image) and an
-allowlist of `{ method, path }` (Express route syntax) as one FLE blob, and returns
+allowlist of `{ method, path }` (Express route syntax) as one encrypted blob, and returns
 an `id`; `DELETE /arm/{id}` disarms. The host then calls `ANY /proxy/{id}/<vendor path>` with
 `Authorization: Bearer <EdDSA JWS>` over `{ method, path, bodySha256, iat, exp }`; the enclave
 checks the allowlist, builds the vendor authorization (`proxy-service/providers/vendors/`) and
@@ -123,14 +123,20 @@ What decrypts this way (`kms_decrypt` in `shared/aws.ash`, which runs `packages/
   the key's RFC 7638 thumbprint, so it changes with the key; verifiers resolve keys through
   `jku`, and jose fetches the JWKS again on an unknown `kid`. There is no rotation: one key,
   kept for as long as `signing_key.enc` exists.
-- proxy-service does the same for its LUKS password (`proxy/luks_entropy_password.enc`) and FLE
-  master key (`proxy/fle_master_key.enc`, `proxy-service/scripts/run.ash`), wrapped by its own
-  `AWS_KMS_FLE_ARN` from `proxy/config.env`, and the same AES-GCM helper. It has no signing key.
+- proxy-service does the same for its LUKS password (`proxy/luks_entropy_password.enc`). It has
+  no master key and no signing key: every armed record gets its own AES-256 data key from
+  `kms:GenerateDataKey` on `AWS_KMS_FLE_ARN` (`proxy/config.env`), with the attestation as
+  Recipient and the `armedId` as encryption context. Only the KMS-wrapped data key is stored
+  next to the record; reading it is an attested `kms:Decrypt` (`packages/nitro-nsm/kms-decrypt.ts`),
+  cached in memory for 10 minutes (`proxy-service/providers/db.ts`). A leaked data key opens one
+  record, every unwrap is in CloudTrail with its `armedId`, and changing the key policy cuts off
+  reads within the cache TTL.
 - Images without the addon (entropy-service, facesign-service) keep the plain host-role
   `aws kms decrypt` in `kms_decrypt`. Their keys live in other infra modules
   (`lib/entropy-tee`, `lib/facesign-tee`) and aren't PCR-restricted.
 
-Losing `fle_master_key.enc` (or the FLE KMS key) makes all stored sessions unreadable.
+Losing `enclave/fle_master_key.enc` (or the enclave's FLE KMS key) makes all stored sessions
+unreadable; losing the proxy's `AWS_KMS_FLE_ARN` key makes all armed records unreadable.
 
 Sessions (enclave-service) and armed records (proxy-service) live in DynamoDB tables named by
 `DYNAMODB_SESSIONS_TABLE` / `DYNAMODB_ARMED_TABLE` in each `config.env`; neither service uses
@@ -208,13 +214,17 @@ PCR condition on `kms:Decrypt`. Its ARN goes into `enclave/config.env` as
 
 ### Infra for proxy-service (`lib/proxy-tee` or wherever its keys live)
 
-Before the first deploy: let the instance role `s3:GetObject` and conditional `s3:PutObject`
-`proxy/fle_master_key.enc` (next to `proxy/luks_entropy_password.enc`), and give it
-`kms:Encrypt` + `kms:Decrypt` on `AWS_KMS_FLE_ARN` and `AWS_KMS_LUKS_ARN` from `proxy/config.env`.
-No rewrap means the FLE key never needs a plain decrypt, so both keys can get the PCR condition on
-`kms:Decrypt` as soon as there is a non-debug EIF to measure (`proxy-service/scripts/enclave-run.ash`
-still runs with `--attach-console`, i.e. debug mode with all-zero PCRs). The trust assumption above
-applies to `proxy/*.enc` the same way.
+The instance role needs `kms:GenerateDataKey` + `kms:Decrypt` on `AWS_KMS_FLE_ARN` (no
+`kms:Encrypt`, and no `proxy/fle_master_key.enc` in S3 any more; delete it), plus `kms:Encrypt` +
+`kms:Decrypt` on `AWS_KMS_LUKS_ARN`. Every FLE-key call carries an attestation, so the key policy
+can require `kms:RecipientAttestation:PCR0-2` on both `kms:GenerateDataKey` and `kms:Decrypt` as
+soon as there is a non-debug EIF to measure (`proxy-service/scripts/enclave-run.ash` still runs
+with `--attach-console`, i.e. debug mode with all-zero PCRs). Until then the host role can unwrap
+data keys itself. Worth adding: a CloudTrail alert on FLE-key `Decrypt` without a recipient. The
+trust assumption above applies to `proxy/luks_entropy_password.enc` the same way.
+
+Records armed before this change have no `dataKeyEnc` and read as missing (404): hosts arm them
+again.
 
 ### Open decisions
 

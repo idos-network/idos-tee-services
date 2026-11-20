@@ -4,13 +4,15 @@ import {
   GetItemCommand,
   PutItemCommand,
 } from "@aws-sdk/client-dynamodb";
-import { createAesGcm } from "@idos/tee-common/aes-gcm.ts";
+import { kmsDecrypt, kmsGenerateDataKey } from "@idos/nitro-nsm/kms-decrypt.ts";
+import { decryptGcm, encryptGcm } from "@idos/tee-common/aes-gcm.ts";
 import { traced } from "@idos/tee-common/telemetry.ts";
-import { DYNAMODB_ARMED_TABLE, FLE_MASTER_KEY } from "../env.ts";
+import { AWS_KMS_FLE_ARN, DYNAMODB_ARMED_TABLE } from "../env.ts";
 import type { ArmRequest } from "../utils/dto.ts";
 
-// Fail at boot, not on the first request, like the master key check below.
+// Fail at boot, not on the first request.
 if (!DYNAMODB_ARMED_TABLE) throw new Error("DYNAMODB_ARMED_TABLE is not set");
+if (!AWS_KMS_FLE_ARN) throw new Error("AWS_KMS_FLE_ARN is not set");
 
 // Region and credentials from the SDK defaults (AWS_REGION, instance role via IMDS). The SDK
 // sets no timeouts: without them a stalled vsock connection hangs the request and is never retried.
@@ -22,21 +24,44 @@ const client = new DynamoDBClient({
   requestHandler: { connectionTimeout: 1_000, requestTimeout: 3_000, throwOnRequestTimeout: true },
 });
 
-// Key derived from the master key, which scripts/run.ash decrypts with attestation.
-const aead = createAesGcm(FLE_MASTER_KEY, "proxy-armed-v1");
+// Every record has its own AES-256 data key from KMS (AWS_KMS_FLE_ARN), generated and unwrapped
+// with this enclave's attestation, so no long-lived key exists to leak: one leaked data key opens
+// one record, and every unwrap is a kms:Decrypt in CloudTrail with the armedId in its context.
+// Unwrapped keys stay in memory for DATA_KEY_TTL_MS, so a key policy change applies within it.
+const DATA_KEY_TTL_MS = 10 * 60 * 1000;
+// shortcut: unbounded, keyed by the wrapped key; fine for the few hundred armed records we hold,
+// add an LRU bound if that grows.
+const dataKeys = new Map<string, { key: Promise<Buffer>; expiresAt: number }>();
 
-// Item: armedId (S), dataEnc (B), createdAt (N, epoch ms). Everything (incl. the armedId) is in
-// one AES-GCM blob, so a table writer can neither swap the host key / environment nor copy a
-// blob between records.
+function unwrapDataKey(armedId: string, wrapped: Uint8Array): Promise<Buffer> {
+  const id = Buffer.from(wrapped).toString("base64");
+  const cached = dataKeys.get(id);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.key;
+  }
+
+  // Concurrent requests share one KMS call; a failed one isn't cached.
+  const key = kmsDecrypt(wrapped, { armedId });
+  dataKeys.set(id, { key, expiresAt: Date.now() + DATA_KEY_TTL_MS });
+  key.catch(() => dataKeys.delete(id));
+  return key;
+}
+
+// Item: armedId (S), dataKeyEnc (B, KMS-wrapped data key bound to the armedId), dataEnc (B),
+// createdAt (N, epoch ms). Everything else is in one AES-GCM blob with the armedId as AAD, so a
+// table writer can neither swap the host key / environment nor copy a blob between records.
 export type Armed = ArmRequest & { id: string };
 
 export const storeArmed = traced("db.storeArmed", async (armedId: string, data: ArmRequest) => {
+  const { plaintext, ciphertext } = await kmsGenerateDataKey(AWS_KMS_FLE_ARN, { armedId });
+
   await client.send(
     new PutItemCommand({
       TableName: DYNAMODB_ARMED_TABLE,
       Item: {
         armedId: { S: armedId },
-        dataEnc: { B: aead.encrypt(JSON.stringify({ armedId, ...data })) },
+        dataKeyEnc: { B: ciphertext },
+        dataEnc: { B: encryptGcm(plaintext, JSON.stringify(data), armedId) },
         createdAt: { N: String(Date.now()) },
       },
       // No attribute_not_exists: ids are random UUIDs, and an SDK retry of a put that landed
@@ -54,17 +79,12 @@ export const getArmed = traced("db.getArmed", async (armedId: string): Promise<A
     }),
   );
 
-  if (!Item?.dataEnc?.B) {
+  if (!Item?.dataEnc?.B || !Item.dataKeyEnc?.B) {
     return null;
   }
 
-  const { armedId: blobArmedId, ...data }: ArmRequest & { armedId: string } = JSON.parse(
-    aead.decrypt(Item.dataEnc.B).toString("utf8"),
-  );
-
-  if (blobArmedId !== armedId) {
-    throw new Error(`Armed record ${armedId} holds a blob for armedId ${blobArmedId}`);
-  }
+  const key = await unwrapDataKey(armedId, Item.dataKeyEnc.B);
+  const data: ArmRequest = JSON.parse(decryptGcm(key, Item.dataEnc.B, armedId).toString("utf8"));
 
   return { id: armedId, ...data };
 });
