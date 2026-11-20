@@ -151,9 +151,8 @@ Rotate a vendor key by arming again and disarming the old id.
 
 ```bash
 pnpm install
-# Once: armed records stay encrypted under a key derived from this master key, so reuse it
-openssl rand -base64 96 | tr -d "\n" > .fle_master_key
-DYNAMODB_ARMED_TABLE=… AWS_REGION=… FLE_MASTER_KEY=$(cat .fle_master_key) ARM_TOKENS=dev-token pnpm start
+# Outside an enclave (no NSM addon) the data keys come from KMS in plaintext to your credentials
+DYNAMODB_ARMED_TABLE=… AWS_REGION=… AWS_KMS_FLE_ARN=… ARM_TOKENS=dev-token pnpm start
 ```
 
 `pnpm test` runs without DynamoDB or KMS (both mocked).
