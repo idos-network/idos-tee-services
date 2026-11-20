@@ -128,9 +128,12 @@ What decrypts this way (`kms_decrypt` in `shared/aws.ash`, which runs `packages/
   `kms:GenerateDataKey` on `AWS_KMS_ARMED_ARN` (`proxy/config.env`), with the attestation as
   Recipient and the `armedId` as encryption context. Only the KMS-wrapped data key is stored
   next to the record; reading it is an attested `kms:Decrypt` (`packages/nitro-nsm/kms-decrypt.ts`),
-  cached in memory for 10 minutes (`proxy-service/providers/db.ts`). A leaked data key opens one
-  record, every unwrap is in CloudTrail with its `armedId`, and changing the key policy cuts off
-  reads within the cache TTL.
+  cached in memory per `armedId` for 10 minutes and evicted on disarm
+  (`proxy-service/providers/db.ts`). The unwrap pins `KeyId`, so a wrapped key from any other KMS
+  key the role can decrypt with is refused. A leaked data key opens one record, and every unwrap
+  is in CloudTrail with its `armedId`. A key policy change stops new unwraps once KMS has
+  propagated it (eventually consistent); keys unwrapped before that stay usable for up to 10
+  more minutes.
 - Images without the addon (entropy-service, facesign-service) keep the plain host-role
   `aws kms decrypt` in `kms_decrypt`. Their keys live in other infra modules
   (`lib/entropy-tee`, `lib/facesign-tee`) and aren't PCR-restricted.
@@ -215,7 +218,7 @@ PCR condition on `kms:Decrypt`. Its ARN goes into `enclave/config.env` as
 ### Infra for proxy-service (`lib/proxy-tee` or wherever its keys live)
 
 The instance role needs `kms:GenerateDataKey` + `kms:Decrypt` on `AWS_KMS_ARMED_ARN` (no
-`kms:Encrypt`, and no `proxy/fle_master_key.enc` in S3 any more; delete it), plus `kms:Encrypt` +
+`kms:Encrypt`; the proxy no longer reads `proxy/fle_master_key.enc`), plus `kms:Encrypt` +
 `kms:Decrypt` on `AWS_KMS_LUKS_ARN`. Every armed-key call carries an attestation, so the key policy
 can require `kms:RecipientAttestation:PCR0-2` on both `kms:GenerateDataKey` and `kms:Decrypt` as
 soon as there is a non-debug EIF to measure (`proxy-service/scripts/enclave-run.ash` still runs
@@ -226,6 +229,12 @@ trust assumption above applies to `proxy/luks_entropy_password.enc` the same way
 In `proxy/config.env`, rename `AWS_KMS_FLE_ARN` to `AWS_KMS_ARMED_ARN` (the same key ARN works);
 without it the proxy refuses to boot. Records armed before this change have no `dataKeyEnc` and
 read as missing (404): hosts arm them again.
+
+Keep `proxy/fle_master_key.enc`, and a key policy that still lets the old release decrypt it
+without an `armedId` context, until the rollback window closes:
+the previous release needs it to read records armed before this change, and without the object
+it would generate a new key and read nothing. Delete it only once rollback is off the table, or
+after a recoverable copy exists (bucket versioning / Object Lock).
 
 ### Open decisions
 

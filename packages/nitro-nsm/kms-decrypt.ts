@@ -66,12 +66,15 @@ async function recipient() {
   };
 }
 
-/** KMS Decrypt, with this enclave's attestation as Recipient where the NSM exists. */
+/**
+ * KMS Decrypt, with this enclave's attestation as Recipient where the NSM exists. Pass `keyId`
+ * whenever the caller knows it, so KMS can't pick another key from an attacker's ciphertext.
+ */
 export async function kmsDecrypt(
   ciphertext: Uint8Array,
-  encryptionContext?: Record<string, string>,
+  { keyId, encryptionContext }: { keyId?: string; encryptionContext?: Record<string, string> } = {},
 ): Promise<Buffer> {
-  const input = { CiphertextBlob: ciphertext, EncryptionContext: encryptionContext };
+  const input = { CiphertextBlob: ciphertext, KeyId: keyId, EncryptionContext: encryptionContext };
   if (!hasNsm) {
     return Buffer.from((await kms.send(new DecryptCommand(input))).Plaintext as Uint8Array);
   }
