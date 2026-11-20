@@ -13,7 +13,7 @@ const validBody = () => ({
 describe("POST /session", () => {
   beforeEach(resetMocks);
 
-  it("stores key in mocked mongo and signs with the enclave key", async () => {
+  it("stores key in the mocked store and signs with the enclave key", async () => {
     const session = await createSession();
 
     const publicKey = Buffer.from(session.sessionClientKeyPair.publicKey).toString("base64url");

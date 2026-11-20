@@ -26,8 +26,7 @@ const client = new DynamoDBClient({
 const aead = createAesGcm(FLE_MASTER_KEY, "enclave-session-v1");
 
 // The record's plaintext fields a table writer could otherwise swap or edit (the client key
-// authenticates the session, createdAt sets its expiry). createdAt is epoch ms, as the Mongo
-// Date was, so records copied by scripts/migrate-sessions.ts keep decrypting.
+// authenticates the session, createdAt (epoch ms) sets its expiry).
 interface BoundFields {
   sessionId: string;
   sessionClientPublicKeyB64: string;

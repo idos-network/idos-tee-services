@@ -17,7 +17,6 @@
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1171.0",
-    "@aws-sdk/credential-providers": "^3.1169.0",
     "@idos/nitro-nsm": "workspace:*",
     "@idos/tee-common": "workspace:*",
     "@prometheus-io/client": "^0.16.1",
