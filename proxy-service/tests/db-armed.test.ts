@@ -111,14 +111,14 @@ describe("armed records in DynamoDB", () => {
     await expect(deleteArmed("id-3")).resolves.toBeUndefined();
   });
 
-  it("refuses to load without AWS_KMS_FLE_ARN", async () => {
-    const original = process.env.AWS_KMS_FLE_ARN;
+  it("refuses to load without AWS_KMS_ARMED_ARN", async () => {
+    const original = process.env.AWS_KMS_ARMED_ARN;
     try {
-      delete process.env.AWS_KMS_FLE_ARN;
+      delete process.env.AWS_KMS_ARMED_ARN;
       vi.resetModules();
-      await expect(import("../providers/db.ts")).rejects.toThrow(/AWS_KMS_FLE_ARN/);
+      await expect(import("../providers/db.ts")).rejects.toThrow(/AWS_KMS_ARMED_ARN/);
     } finally {
-      process.env.AWS_KMS_FLE_ARN = original;
+      process.env.AWS_KMS_ARMED_ARN = original;
     }
   });
 });
