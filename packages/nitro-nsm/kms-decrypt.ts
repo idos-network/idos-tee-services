@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { generateKeyPair, type KeyObject } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -28,10 +28,6 @@ export function unwrapEnvelope(envelope: Uint8Array, privateKey: KeyObject): Buf
     rmSync(dir, { recursive: true });
   }
 }
-
-// Without the NSM addon (local runs, entropy/facesign images) KMS answers in plaintext to the
-// host role; inside our enclaves the addon is always there.
-const hasNsm = existsSync(new URL("./nitro-nsm.node", import.meta.url));
 
 // The SDK sets no timeouts: without them a stalled vsock connection hangs the caller.
 const kms = new KMSClient({
@@ -67,43 +63,43 @@ async function recipient() {
 }
 
 /**
- * KMS Decrypt, with this enclave's attestation as Recipient where the NSM exists. Pass `keyId`
- * whenever the caller knows it, so KMS can't pick another key from an attacker's ciphertext.
+ * KMS Decrypt with this enclave's attestation as Recipient; throws outside an enclave. Pass
+ * `keyId` whenever the caller knows it, so KMS can't pick another key from an attacker's
+ * ciphertext.
  */
 export async function kmsDecrypt(
   ciphertext: Uint8Array,
   { keyId, encryptionContext }: { keyId?: string; encryptionContext?: Record<string, string> } = {},
 ): Promise<Buffer> {
-  const input = { CiphertextBlob: ciphertext, KeyId: keyId, EncryptionContext: encryptionContext };
-  if (!hasNsm) {
-    return Buffer.from((await kms.send(new DecryptCommand(input))).Plaintext as Uint8Array);
-  }
-
   const { Recipient, open } = await recipient();
-  const { CiphertextForRecipient } = await kms.send(new DecryptCommand({ ...input, Recipient }));
+  const { CiphertextForRecipient } = await kms.send(
+    new DecryptCommand({
+      CiphertextBlob: ciphertext,
+      KeyId: keyId,
+      EncryptionContext: encryptionContext,
+      Recipient,
+    }),
+  );
   return open(CiphertextForRecipient);
 }
 
 /**
- * A fresh AES-256 data key: `plaintext` for this enclave only, `ciphertext` wrapped by `keyId`
- * and bound to `encryptionContext`, to store next to what the key encrypts.
+ * A fresh AES-256 data key, attested like kmsDecrypt: `plaintext` for this enclave only,
+ * `ciphertext` wrapped by `keyId` and bound to `encryptionContext`, to store next to what the
+ * key encrypts.
  */
 export async function kmsGenerateDataKey(
   keyId: string,
   encryptionContext: Record<string, string>,
 ): Promise<{ plaintext: Buffer; ciphertext: Uint8Array }> {
-  const input = { KeyId: keyId, KeySpec: "AES_256" as const, EncryptionContext: encryptionContext };
-  if (!hasNsm) {
-    const { Plaintext, CiphertextBlob } = await kms.send(new GenerateDataKeyCommand(input));
-    return {
-      plaintext: Buffer.from(Plaintext as Uint8Array),
-      ciphertext: CiphertextBlob as Uint8Array,
-    };
-  }
-
   const { Recipient, open } = await recipient();
   const { CiphertextForRecipient, CiphertextBlob } = await kms.send(
-    new GenerateDataKeyCommand({ ...input, Recipient }),
+    new GenerateDataKeyCommand({
+      KeyId: keyId,
+      KeySpec: "AES_256",
+      EncryptionContext: encryptionContext,
+      Recipient,
+    }),
   );
   if (!CiphertextBlob) {
     throw new Error("KMS returned no CiphertextBlob");

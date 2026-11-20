@@ -19,7 +19,7 @@ switch (command) {
     break;
   }
   case "kms-decrypt": {
-    // With the NSM addon in the image the plaintext only comes back encrypted to the attestation
+    // Attested: the plaintext only comes back encrypted to this enclave's attestation
     console.log((await kmsDecrypt(Buffer.from(a, "base64"))).toString("base64"));
     break;
   }
