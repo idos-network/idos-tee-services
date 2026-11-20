@@ -72,14 +72,6 @@ RUN pnpm install --prod --frozen-lockfile --filter "proxy-service..." --package-
 # Shared boot scripts sourced by scripts/run.ash
 COPY shared ./proxy-service/scripts/shared
 
-# DocumentDB's TLS cert is signed by the Amazon RDS CA, not a public one.
-# MONGO_URI points at it with tlsCAFile=/etc/ssl/rds-global-bundle.pem
-ARG RDS_CA_BUNDLE_SHA256=90a6f1a7978a1b1b096dca6c57511ca48d3b8cf052f8e704baf358f34ea2f21b
-RUN curl -fsSL "https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem" -o /etc/ssl/rds-global-bundle.pem \
-    && echo "${RDS_CA_BUNDLE_SHA256}  /etc/ssl/rds-global-bundle.pem" | sha256sum -c -
-# Node ignores the system store; trust the bundle even if MONGO_URI lacks tlsCAFile
-ENV NODE_EXTRA_CA_CERTS=/etc/ssl/rds-global-bundle.pem
-
 # Setup node-metrics
 ARG NODE_EXPORTER_VERSION=1.11.0
 ARG NODE_EXPORTER_SHA256=4f8fbd23b8380b8fb720b125fb9029de261dc5fcd68bfe81ae010c0d32f5f6c3

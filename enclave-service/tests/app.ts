@@ -75,7 +75,6 @@ vi.mock("../providers/db.ts", () => ({
   storeSession: mocks.storeSession,
   getSession: mocks.getSession,
   deleteSession: mocks.deleteSession,
-  connectDB: vi.fn(),
 }));
 
 const { default: app } = await import("../server.ts");

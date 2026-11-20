@@ -1,6 +1,6 @@
 import request from "supertest";
 import { beforeEach, describe, expect, it } from "vitest";
-import { app, arm, resetMocks, upstream, upstreamJson } from "./app.ts";
+import { app, arm, getArmed, resetMocks, upstream, upstreamJson } from "./app.ts";
 import { BASE_URL, HOST_KEY_PAIR, hostJws, OTHER_HOST_KEY_PAIR } from "./helpers.ts";
 
 const IDENT_PATH = "/api/identifications/ident-123";
@@ -15,6 +15,16 @@ describe("ANY /proxy/:id/*", () => {
       .get(`/proxy/${crypto.randomUUID()}${IDENT_PATH}`)
       .set("Authorization", `Bearer ${jws}`)
       .expect(404);
+  });
+
+  it("404 for an id that is not a UUID, without a DynamoDB call", async () => {
+    const jws = await hostJws({ method: "GET", path: IDENT_PATH });
+
+    await request(app)
+      .get(`/proxy/${"x".repeat(3000)}${IDENT_PATH}`)
+      .set("Authorization", `Bearer ${jws}`)
+      .expect(404);
+    expect(getArmed()).not.toHaveBeenCalled();
   });
 
   it("401 without a host signature", async () => {

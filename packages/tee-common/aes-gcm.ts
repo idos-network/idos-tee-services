@@ -1,4 +1,4 @@
-// AES-256-GCM for fields stored in Mongo, keyed from the attested 96-byte master key
+// AES-256-GCM for fields stored in the database, keyed from the attested 96-byte master key
 // (FLE_MASTER_KEY, decrypted by the service's scripts/run.ash).
 
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from "node:crypto";

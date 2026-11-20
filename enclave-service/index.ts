@@ -52,7 +52,7 @@ if (cluster.isPrimary) {
   }).listen(7001, "127.0.0.1");
 } else {
   startTelemetry("enclave");
-  // Imported only in workers: it reads the secrets and connects to Mongo.
+  // Imported only in workers: it reads the secrets.
   const { default: app } = await import("./server.ts");
   startServer(app);
 }

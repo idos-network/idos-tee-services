@@ -103,7 +103,7 @@ paths:
       summary: Arm the proxy for a host
       description: |
         Stores the host public key, vendor, vendor credentials, environment and
-        allowlist as one field-level encrypted blob in Mongo and returns the
+        allowlist as one field-level encrypted blob in DynamoDB and returns the
         armed `id` used in `/proxy/{id}/...`.
       operationId: arm
       security:
@@ -139,7 +139,9 @@ paths:
     delete:
       tags: [Arm]
       summary: Disarm
-      description: Deletes the armed record; later `/proxy/{id}/...` calls get 404.
+      description: |
+        Deletes the armed record; later `/proxy/{id}/...` calls get 404.
+        Idempotent: an id that is already disarmed (or never existed) also gets 204.
       operationId: disarm
       security:
         - armToken: []
@@ -161,7 +163,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "404":
-          description: Unknown armed id
+          description: The id is not a UUID
           content:
             application/json:
               schema:

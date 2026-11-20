@@ -106,11 +106,19 @@ describe("DELETE /arm/:id", () => {
     expect(deleteArmed()).not.toHaveBeenCalled();
   });
 
-  it("404 for an unknown id", async () => {
+  it("404 for an id that is not a UUID, without a DynamoDB call", async () => {
+    await request(app)
+      .delete(`/arm/${"x".repeat(3000)}`)
+      .set("Authorization", `Bearer ${ARM_TOKEN}`)
+      .expect(404);
+    expect(deleteArmed()).not.toHaveBeenCalled();
+  });
+
+  it("204 for an unknown UUID: disarm is idempotent", async () => {
     await request(app)
       .delete(`/arm/${crypto.randomUUID()}`)
       .set("Authorization", `Bearer ${ARM_TOKEN}`)
-      .expect(404);
+      .expect(204);
   });
 
   it("disarms, so later proxy calls get 404", async () => {

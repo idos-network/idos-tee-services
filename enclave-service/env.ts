@@ -1,8 +1,6 @@
 // biome-ignore-all lint/style/noNonNullAssertion: This is ok
 export const GROUP_NAME = "enclave-service";
-export const MONGO_URI = process.env.MONGO_URI!;
-export const DB_ENCLAVE_COLLECTION = "idOSEnclave";
-export const DB_NAME = "enclave";
+export const DYNAMODB_SESSIONS_TABLE = process.env.DYNAMODB_SESSIONS_TABLE!;
 export const SESSION_TTL_SECONDS = 60 * 60; // 1hour
 // base64, 96 bytes: master key the session-field AES key is derived from, see scripts/run.ash
 export const FLE_MASTER_KEY = process.env.FLE_MASTER_KEY!;
