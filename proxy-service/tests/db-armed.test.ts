@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import type { AttributeValue } from "@aws-sdk/client-dynamodb";
 import { describe, expect, it, vi } from "vitest";
 import { armBody } from "./helpers.ts";
@@ -5,24 +6,32 @@ import { armBody } from "./helpers.ts";
 type Item = Record<string, AttributeValue>;
 
 // In-memory DynamoDB table keyed by armedId, so blobs can be inspected and swapped between records.
-// KMS stand-in: the "wrapped" data key is the key plus its encryption context, and unwrapping
-// fails on a different context, as KMS does.
+// KMS stand-in: the "wrapped" data key is the key plus its KMS key and encryption context, and
+// unwrapping fails on a different key or context, as KMS does.
 const h = vi.hoisted(() => ({
   items: new Map<string, Item>(),
-  kmsDecrypt: vi.fn(async (wrapped: Uint8Array, context?: Record<string, string>) => {
-    const { key, armedId } = JSON.parse(Buffer.from(wrapped).toString());
-    if (armedId !== context?.armedId) throw new Error("InvalidCiphertextException");
-    return Buffer.from(key, "base64");
-  }),
+  kmsDecrypt: vi.fn(
+    async (
+      wrapped: Uint8Array,
+      opts: { keyId?: string; encryptionContext?: Record<string, string> } = {},
+    ) => {
+      const { key, keyId, armedId } = JSON.parse(Buffer.from(wrapped).toString());
+      if (keyId !== opts.keyId) throw new Error("IncorrectKeyException");
+      if (armedId !== opts.encryptionContext?.armedId) {
+        throw new Error("InvalidCiphertextException");
+      }
+      return Buffer.from(key, "base64");
+    },
+  ),
 }));
 
 vi.mock("@idos/nitro-nsm/kms-decrypt.ts", async () => {
   const { randomBytes } = await import("node:crypto");
   return {
     kmsDecrypt: h.kmsDecrypt,
-    kmsGenerateDataKey: async (_keyId: string, { armedId }: Record<string, string>) => {
+    kmsGenerateDataKey: async (keyId: string, { armedId }: Record<string, string>) => {
       const plaintext = randomBytes(32);
-      const wrapped = { key: plaintext.toString("base64"), armedId };
+      const wrapped = { key: plaintext.toString("base64"), keyId, armedId };
       return { plaintext, ciphertext: Buffer.from(JSON.stringify(wrapped)) };
     },
   };
@@ -35,6 +44,11 @@ vi.mock("@aws-sdk/client-dynamodb", async (importOriginal) => {
 });
 
 const { deleteArmed, getArmed, storeArmed } = await import("../providers/db.ts");
+const { encryptGcm } = await import("@idos/tee-common/aes-gcm.ts");
+
+// The plaintext data key inside a stand-in wrapped key, as if it had leaked.
+const leakedKey = (wrapped: AttributeValue | undefined) =>
+  Buffer.from(JSON.parse(Buffer.from(wrapped?.B ?? []).toString()).key, "base64");
 
 function item(id: string) {
   const i = h.items.get(id);
@@ -109,6 +123,57 @@ describe("armed records in DynamoDB", () => {
     await deleteArmed("id-3");
     expect(await getArmed("id-3")).toBeNull();
     await expect(deleteArmed("id-3")).resolves.toBeUndefined();
+  });
+
+  it("never decrypts a record with another record's cached key", async () => {
+    await storeArmed("leaked", armBody());
+    await storeArmed("target", armBody());
+    await getArmed("leaked"); // its key is now cached
+
+    // A table writer who knows the leaked key forges "target" under it, with the right AAD
+    const forged = encryptGcm(
+      leakedKey(item("leaked").dataKeyEnc),
+      JSON.stringify(armBody({ environment: "production" })),
+      "target",
+    );
+    item("target").dataKeyEnc = item("leaked").dataKeyEnc as AttributeValue;
+    item("target").dataEnc = { B: forged };
+
+    await expect(getArmed("target")).rejects.toThrow(/InvalidCiphertext/);
+  });
+
+  it("pins the armed KMS key on unwrap", async () => {
+    await storeArmed("id-7", armBody());
+    // e.g. a key the host can encrypt under, with the right context
+    const foreign = { key: randomBytes(32).toString("base64"), keyId: "luks", armedId: "id-7" };
+    item("id-7").dataKeyEnc = { B: Buffer.from(JSON.stringify(foreign)) };
+
+    await expect(getArmed("id-7")).rejects.toThrow(/IncorrectKey/);
+    expect(h.kmsDecrypt).toHaveBeenLastCalledWith(expect.anything(), {
+      keyId: process.env.AWS_KMS_ARMED_ARN,
+      encryptionContext: { armedId: "id-7" },
+    });
+  });
+
+  it("evicts a cached key on disarm and after the TTL", async () => {
+    vi.useFakeTimers();
+    try {
+      await storeArmed("id-8", armBody());
+      const stored = { ...item("id-8") };
+      h.kmsDecrypt.mockClear();
+
+      await getArmed("id-8");
+      vi.advanceTimersByTime(10 * 60 * 1000);
+      await getArmed("id-8");
+      expect(h.kmsDecrypt).toHaveBeenCalledTimes(2);
+
+      await deleteArmed("id-8");
+      h.items.set("id-8", stored); // same record back: the key must come from KMS again
+      await getArmed("id-8");
+      expect(h.kmsDecrypt).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("refuses to load without AWS_KMS_ARMED_ARN", async () => {

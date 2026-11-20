@@ -27,23 +27,39 @@ const client = new DynamoDBClient({
 // Every record has its own AES-256 data key from KMS (AWS_KMS_ARMED_ARN), generated and unwrapped
 // with this enclave's attestation, so no long-lived key exists to leak: one leaked data key opens
 // one record, and every unwrap is a kms:Decrypt in CloudTrail with the armedId in its context.
-// Unwrapped keys stay in memory for DATA_KEY_TTL_MS, so a key policy change applies within it.
+// An unwrapped key stays in memory for DATA_KEY_TTL_MS after its unwrap, then is evicted.
 const DATA_KEY_TTL_MS = 10 * 60 * 1000;
-// shortcut: unbounded, keyed by the wrapped key; fine for the few hundred armed records we hold,
-// add an LRU bound if that grows.
-const dataKeys = new Map<string, { key: Promise<Buffer>; expiresAt: number }>();
+// One entry per armedId, valid only for the wrapped key it was unwrapped from: a key cached for
+// one record never decrypts another, so KMS checks every record's own context.
+// shortcut: unbounded; fine for the few hundred armed records we hold, add an LRU bound if that grows.
+type CachedKey = { wrapped: string; key: Promise<Buffer>; timer: NodeJS.Timeout };
+const dataKeys = new Map<string, CachedKey>();
 
-function unwrapDataKey(armedId: string, wrapped: Uint8Array): Promise<Buffer> {
-  const id = Buffer.from(wrapped).toString("base64");
-  const cached = dataKeys.get(id);
-  if (cached && cached.expiresAt > Date.now()) {
+function evictDataKey(armedId: string, entry = dataKeys.get(armedId)) {
+  if (entry && dataKeys.get(armedId) === entry) {
+    clearTimeout(entry.timer);
+    dataKeys.delete(armedId);
+  }
+}
+
+function unwrapDataKey(armedId: string, wrappedKey: Uint8Array): Promise<Buffer> {
+  const wrapped = Buffer.from(wrappedKey).toString("base64");
+  const cached = dataKeys.get(armedId);
+  if (cached?.wrapped === wrapped) {
     return cached.key;
   }
+  evictDataKey(armedId);
 
+  // KeyId pinned: KMS refuses a wrapped key from any other key this role can decrypt with.
   // Concurrent requests share one KMS call; a failed one isn't cached.
-  const key = kmsDecrypt(wrapped, { armedId });
-  dataKeys.set(id, { key, expiresAt: Date.now() + DATA_KEY_TTL_MS });
-  key.catch(() => dataKeys.delete(id));
+  const key = kmsDecrypt(wrappedKey, { keyId: AWS_KMS_ARMED_ARN, encryptionContext: { armedId } });
+  const entry: CachedKey = {
+    wrapped,
+    key,
+    timer: setTimeout(() => evictDataKey(armedId, entry), DATA_KEY_TTL_MS).unref(),
+  };
+  dataKeys.set(armedId, entry);
+  key.catch(() => evictDataKey(armedId, entry));
   return key;
 }
 
@@ -91,6 +107,7 @@ export const getArmed = traced("db.getArmed", async (armedId: string): Promise<A
 
 /** Idempotent: deleting a missing record succeeds, so an SDK retry of a delete that landed does too. */
 export const deleteArmed = traced("db.deleteArmed", async (armedId: string) => {
+  evictDataKey(armedId);
   await client.send(
     new DeleteItemCommand({ TableName: DYNAMODB_ARMED_TABLE, Key: { armedId: { S: armedId } } }),
   );
