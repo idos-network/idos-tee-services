@@ -40,12 +40,11 @@ kms_encrypt() {
 
 # kms_decrypt <base64 ciphertext> - prints the base64 plaintext.
 #
-# With the NSM addon in the image (enclave-service, proxy-service) aws.ts sends this enclave's
-# attestation document from /dev/nsm as Recipient. KMS then returns the plaintext only
+# Without AWS CLI, aws.ts sends this enclave's attestation document from /dev/nsm as Recipient
+# (it needs the NSM addon: enclave-service, proxy-service). KMS then returns the plaintext only
 # encrypted to the attestation's ephemeral key (CiphertextForRecipient), which
 # packages/nitro-nsm/kms-decrypt.ts opens inside the enclave, and the key policy can require
-# kms:RecipientAttestation:PCR0-2. Images without the addon (entropy, facesign) make
-# the plain host-role call.
+# kms:RecipientAttestation:PCR0-2. facesign still makes the plain host-role call through AWS CLI.
 kms_decrypt() {
   if has_aws_cli; then
     aws kms decrypt --ciphertext-blob "$1" --output text --query Plaintext --region "$AWS_REGION"

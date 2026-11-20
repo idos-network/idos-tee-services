@@ -134,9 +134,10 @@ What decrypts this way (`kms_decrypt` in `shared/aws.ash`, which runs `packages/
   is in CloudTrail with its `armedId`. A key policy change stops new unwraps once KMS has
   propagated it (eventually consistent); keys unwrapped before that stay usable for up to 10
   more minutes.
-- Images without the addon (entropy-service, facesign-service) keep the plain host-role
-  `aws kms decrypt` in `kms_decrypt`. Their keys live in other infra modules
-  (`lib/entropy-tee`, `lib/facesign-tee`) and aren't PCR-restricted.
+- facesign-service keeps the plain host-role `aws kms decrypt` (AWS CLI) in `kms_decrypt`.
+  entropy-service has no NSM addon, so its `kms_decrypt` through `aws.ts` fails until it is
+  reworked. Their keys live in other infra modules (`lib/entropy-tee`, `lib/facesign-tee`) and
+  aren't PCR-restricted.
 
 Losing `enclave/fle_master_key.enc` (or the enclave's FLE KMS key) makes all stored sessions
 unreadable; losing the proxy's `AWS_KMS_ARMED_ARN` key makes all armed records unreadable.

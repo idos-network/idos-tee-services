@@ -150,10 +150,6 @@ Rotate a vendor key by arming again and disarming the old id.
 
 ## Local run
 
-```bash
-pnpm install
-# Outside an enclave (no NSM addon) the data keys come from KMS in plaintext to your credentials
-DYNAMODB_ARMED_TABLE=… AWS_REGION=… AWS_KMS_ARMED_ARN=… ARM_TOKENS=dev-token pnpm start
-```
-
-`pnpm test` runs without DynamoDB or KMS (both mocked).
+The proxy only runs inside a Nitro Enclave: every KMS call carries the enclave's attestation
+(NSM addon), so outside one arming and reading records fail. `pnpm test` runs without DynamoDB,
+KMS or the NSM (all mocked).
