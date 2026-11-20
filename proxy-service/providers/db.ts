@@ -7,12 +7,12 @@ import {
 import { kmsDecrypt, kmsGenerateDataKey } from "@idos/nitro-nsm/kms-decrypt.ts";
 import { decryptGcm, encryptGcm } from "@idos/tee-common/aes-gcm.ts";
 import { traced } from "@idos/tee-common/telemetry.ts";
-import { AWS_KMS_FLE_ARN, DYNAMODB_ARMED_TABLE } from "../env.ts";
+import { AWS_KMS_ARMED_ARN, DYNAMODB_ARMED_TABLE } from "../env.ts";
 import type { ArmRequest } from "../utils/dto.ts";
 
 // Fail at boot, not on the first request.
 if (!DYNAMODB_ARMED_TABLE) throw new Error("DYNAMODB_ARMED_TABLE is not set");
-if (!AWS_KMS_FLE_ARN) throw new Error("AWS_KMS_FLE_ARN is not set");
+if (!AWS_KMS_ARMED_ARN) throw new Error("AWS_KMS_ARMED_ARN is not set");
 
 // Region and credentials from the SDK defaults (AWS_REGION, instance role via IMDS). The SDK
 // sets no timeouts: without them a stalled vsock connection hangs the request and is never retried.
@@ -24,7 +24,7 @@ const client = new DynamoDBClient({
   requestHandler: { connectionTimeout: 1_000, requestTimeout: 3_000, throwOnRequestTimeout: true },
 });
 
-// Every record has its own AES-256 data key from KMS (AWS_KMS_FLE_ARN), generated and unwrapped
+// Every record has its own AES-256 data key from KMS (AWS_KMS_ARMED_ARN), generated and unwrapped
 // with this enclave's attestation, so no long-lived key exists to leak: one leaked data key opens
 // one record, and every unwrap is a kms:Decrypt in CloudTrail with the armedId in its context.
 // Unwrapped keys stay in memory for DATA_KEY_TTL_MS, so a key policy change applies within it.
@@ -53,7 +53,7 @@ function unwrapDataKey(armedId: string, wrapped: Uint8Array): Promise<Buffer> {
 export type Armed = ArmRequest & { id: string };
 
 export const storeArmed = traced("db.storeArmed", async (armedId: string, data: ArmRequest) => {
-  const { plaintext, ciphertext } = await kmsGenerateDataKey(AWS_KMS_FLE_ARN, { armedId });
+  const { plaintext, ciphertext } = await kmsGenerateDataKey(AWS_KMS_ARMED_ARN, { armedId });
 
   await client.send(
     new PutItemCommand({
