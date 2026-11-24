@@ -1,7 +1,15 @@
 import request from "supertest";
 import { beforeEach, describe, expect, it } from "vitest";
-import { app, arm, getArmed, resetMocks, upstream, upstreamJson } from "./app.ts";
-import { BASE_URL, HOST_KEY_PAIR, hostJws, OTHER_HOST_KEY_PAIR } from "./helpers.ts";
+import { app, arm, armed, getArmed, resetMocks, upstream, upstreamJson } from "./app.ts";
+import {
+  armBody,
+  BASE_URL,
+  bodySha256,
+  HOST_KEY_PAIR,
+  hostJws,
+  IDENTITY_KEY,
+  OTHER_HOST_KEY_PAIR,
+} from "./helpers.ts";
 
 const IDENT_PATH = "/api/identifications/ident-123";
 
@@ -37,6 +45,30 @@ describe("ANY /proxy/:id/*", () => {
   it("401 when signed by a key other than the armed host key", async () => {
     const id = await arm();
     const jws = await hostJws({ method: "GET", path: IDENT_PATH }, OTHER_HOST_KEY_PAIR);
+
+    await request(app)
+      .get(`/proxy/${id}${IDENT_PATH}`)
+      .set("Authorization", `Bearer ${jws}`)
+      .expect(401);
+    expect(upstream()).not.toHaveBeenCalled();
+  });
+
+  it("401 for a JWS forged against a small-order host key stored before /arm rejected them", async () => {
+    const id = crypto.randomUUID();
+    armed().set(id, armBody({ hostPublicKey: IDENTITY_KEY }));
+    // For A = identity, R = identity and S = 0 satisfy [S]B = R + [k]A for any message.
+    const enc = (o: object) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const now = Math.floor(Date.now() / 1000);
+    const claims = {
+      method: "GET",
+      path: IDENT_PATH,
+      bodySha256: bodySha256(),
+      iat: now,
+      exp: now + 60,
+    };
+    const signature = Buffer.alloc(64);
+    signature[0] = 1;
+    const jws = `${enc({ alg: "EdDSA" })}.${enc(claims)}.${signature.toString("base64url")}`;
 
     await request(app)
       .get(`/proxy/${id}${IDENT_PATH}`)

@@ -55,3 +55,6 @@ export async function hostJws(
     .setExpirationTime(expiresIn)
     .sign(keyPair.privateKey);
 }
+
+/** The Ed25519 identity point (y = 1) as a JWK `x`: a small-order key with no private key. */
+export const IDENTITY_KEY = Buffer.from(`01${"00".repeat(31)}`, "hex").toString("base64url");

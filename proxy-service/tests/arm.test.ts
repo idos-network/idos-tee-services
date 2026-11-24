@@ -1,7 +1,7 @@
 import request from "supertest";
 import { beforeEach, describe, expect, it } from "vitest";
 import { app, arm, armed, deleteArmed, resetMocks, storeArmed } from "./app.ts";
-import { ARM_TOKEN, armBody, hostJws } from "./helpers.ts";
+import { ARM_TOKEN, armBody, hostJws, IDENTITY_KEY } from "./helpers.ts";
 
 describe("POST /arm", () => {
   beforeEach(resetMocks);
@@ -81,6 +81,22 @@ describe("POST /arm", () => {
       .expect(400);
 
     expect(res.body.details).toEqual([expect.objectContaining({ path: "allow.0.path" })]);
+  });
+
+  // Small-order keys let anyone forge the host JWS without a private key.
+  it.each([
+    ["identity", IDENTITY_KEY],
+    ["order-2", "7P_______________________________________38"],
+    ["order-8, sign bit set", "JuiVj8KyJ7BFw_SJ8u-Y8NXfrAXTxjM5sTgCiG1T_IU"],
+  ])("rejects a small-order host key (%s)", async (_name, hostPublicKey) => {
+    const res = await request(app)
+      .post("/arm")
+      .set("Authorization", `Bearer ${ARM_TOKEN}`)
+      .send(armBody({ hostPublicKey }))
+      .expect(400);
+
+    expect(res.body.details).toEqual([expect.objectContaining({ path: "hostPublicKey" })]);
+    expect(storeArmed()).not.toHaveBeenCalled();
   });
 
   it("stores the armed record and returns its id", async () => {
