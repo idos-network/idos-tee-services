@@ -48,6 +48,15 @@ describe("isAllowed (Express route syntax)", () => {
     expect(isAllowed(allow, "GET", "/api/identifications/-;externalUserId=u-1")).toBe(true);
   });
 
+  it("denies, without expanding, unbounded entries armed before the limits existed", () => {
+    const legacy = [{ method: "GET" as const, path: "{/:a}{/:b}{/:c}{/:d}{/:e}{/:f}{/:g}{/:h}" }];
+    expect(isAllowed(legacy, "GET", "/x")).toBe(false);
+    expect(
+      isAllowed([...Array(64).fill(allow[0]), ...allow], "GET", "/api/identifications/a"),
+    ).toBe(false);
+    expect(isAllowed([{ method: "GET", path: "/a{/:b}{/:c}" }], "GET", "/a/1/2")).toBe(true);
+  });
+
   it("does not match extra segments, a bare prefix or other methods", () => {
     expect(isAllowed(allow, "GET", "/api/identifications/abc/archive")).toBe(false);
     expect(isAllowed(allow, "GET", "/api/identifications")).toBe(false);

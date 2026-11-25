@@ -83,6 +83,25 @@ describe("POST /arm", () => {
     expect(res.body.details).toEqual([expect.objectContaining({ path: "allow.0.path" })]);
   });
 
+  // Each optional group doubles the regex the proxy compiles per request (CPU amplification).
+  it.each([
+    ["3 optional groups", [{ method: "GET", path: "/x{/:a}{/:b}{/:c}" }], "allow.0.path"],
+    ["an over-long path", [{ method: "GET", path: `/${"a".repeat(256)}` }], "allow.0.path"],
+    [
+      "65 entries",
+      Array.from({ length: 65 }, (_, i) => ({ method: "GET", path: `/x/${i}` })),
+      "allow",
+    ],
+  ])("rejects an allowlist with %s", async (_, allow, path) => {
+    const res = await request(app)
+      .post("/arm")
+      .set("Authorization", `Bearer ${ARM_TOKEN}`)
+      .send(armBody({ allow }))
+      .expect(400);
+
+    expect(res.body.details).toEqual([expect.objectContaining({ path })]);
+  });
+
   // Small-order keys let anyone forge the host JWS without a private key.
   it.each([
     ["identity", IDENTITY_KEY],

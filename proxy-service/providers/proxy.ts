@@ -3,7 +3,7 @@ import { annotateSpan, traced } from "@idos/tee-common/telemetry.ts";
 import type { Request } from "express";
 import { match } from "path-to-regexp";
 import { UPSTREAM_TIMEOUT_MS } from "../env.ts";
-import type { ArmRequest } from "../utils/dto.ts";
+import { type ArmRequest, isBoundedPattern, MAX_ALLOW_ENTRIES } from "../utils/dto.ts";
 import type { Armed } from "./db.ts";
 import { authorize } from "./vendors/index.ts";
 
@@ -37,9 +37,13 @@ export function resolveUpstreamUrl(origin: string, path: string): URL | null {
 }
 
 export function isAllowed(allow: ArmRequest["allow"], method: string, pathname: string): boolean {
+  // Re-checked here: records armed before the bounds existed stay in DynamoDB with no TTL.
+  if (allow.length > MAX_ALLOW_ENTRIES) return false;
   return allow.some(
     (entry) =>
-      entry.method === method && match(entry.path, { sensitive: true })(pathname) !== false,
+      entry.method === method &&
+      isBoundedPattern(entry.path) &&
+      match(entry.path, { sensitive: true })(pathname) !== false,
   );
 }
 
