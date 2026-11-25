@@ -5,7 +5,7 @@ import type { RequestHandler } from "express";
 import { errors, importJWK, jwtVerify } from "jose";
 import { HOST_JWS_CLOCK_TOLERANCE, HOST_JWS_MAX_AGE } from "../env.ts";
 import { type Armed, getArmed } from "../providers/db.ts";
-import { isArmedId } from "../utils/dto.ts";
+import { isArmedId, isSmallOrderEd25519 } from "../utils/dto.ts";
 import { writeLog } from "../utils/logger-context.ts";
 
 /** Path (with query) the host addressed on the vendor, i.e. everything after `/proxy/:id`. */
@@ -59,6 +59,8 @@ const verifyHostJws = traced(
     path: string,
     body: Buffer,
   ): Promise<string | null> => {
+    // Arms stored before /arm rejected these would otherwise accept forged signatures.
+    if (isSmallOrderEd25519(armed.hostPublicKey)) return "small-order host key";
     const key = await importJWK({ kty: "OKP", crv: "Ed25519", x: armed.hostPublicKey }, "EdDSA");
 
     try {

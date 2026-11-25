@@ -5,8 +5,34 @@ import { compiles } from "./compiles.ts";
 
 export const ALLOWED_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
 
+// Small-order Ed25519 points (libsodium's ge25519_has_small_order list): with such a key
+// [S]B = R + [k]A degenerates, so a JWS for any payload can be forged without a private key.
+// Compared ignoring the x sign bit, which also covers the non-canonical encodings of y.
+const SMALL_ORDER_POINTS = [
+  "0000000000000000000000000000000000000000000000000000000000000000",
+  "0100000000000000000000000000000000000000000000000000000000000000",
+  "26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05",
+  "c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a",
+  "ecffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+  "edffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+  "eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f",
+];
+
+/** True for a base64url Ed25519 `x` that is a small-order point, for which anyone can forge signatures. */
+export function isSmallOrderEd25519(x: string): boolean {
+  const bytes = Buffer.from(x, "base64url");
+  // Zod still runs this refine after .length(43) fails, so a short key must not throw.
+  if (bytes.length !== 32) return false;
+  bytes.writeUInt8(bytes.readUInt8(31) & 0x7f, 31);
+  return SMALL_ORDER_POINTS.includes(bytes.toString("hex"));
+}
+
 const CommonArmSchema = z.object({
-  hostPublicKey: z.base64url().length(43), // base64url-encoded 32-byte Ed25519 public key (JWK `x`)
+  // base64url-encoded 32-byte Ed25519 public key (JWK `x`)
+  hostPublicKey: z
+    .base64url()
+    .length(43)
+    .refine((x) => !isSmallOrderEd25519(x), { message: "Not a usable Ed25519 public key" }),
   // Picks the vendor origin from its adapter; the host never supplies a URL.
   environment: z.enum(ENVIRONMENTS),
   allow: z
