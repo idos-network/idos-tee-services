@@ -21,6 +21,8 @@ const SMALL_ORDER_POINTS = [
 /** True for a base64url Ed25519 `x` that is a small-order point, for which anyone can forge signatures. */
 export function isSmallOrderEd25519(x: string): boolean {
   const bytes = Buffer.from(x, "base64url");
+  // Zod still runs this refine after .length(43) fails, so a short key must not throw.
+  if (bytes.length !== 32) return false;
   bytes.writeUInt8(bytes.readUInt8(31) & 0x7f, 31);
   return SMALL_ORDER_POINTS.includes(bytes.toString("hex"));
 }

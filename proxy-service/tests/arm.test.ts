@@ -99,6 +99,14 @@ describe("POST /arm", () => {
     expect(storeArmed()).not.toHaveBeenCalled();
   });
 
+  it("400, not 500, for a host key that decodes to fewer than 32 bytes", async () => {
+    await request(app)
+      .post("/arm")
+      .set("Authorization", `Bearer ${ARM_TOKEN}`)
+      .send(armBody({ hostPublicKey: "AQ" }))
+      .expect(400);
+  });
+
   it("stores the armed record and returns its id", async () => {
     const id = await arm();
 
