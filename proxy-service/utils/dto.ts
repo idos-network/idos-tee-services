@@ -1,4 +1,4 @@
-import { pathToRegexp } from "path-to-regexp";
+import { parse, pathToRegexp, type Token } from "path-to-regexp";
 import { z } from "zod";
 import { ENVIRONMENTS, vendors } from "../providers/vendors/index.ts";
 import { compiles } from "./compiles.ts";
@@ -27,6 +27,26 @@ export function isSmallOrderEd25519(x: string): boolean {
   return SMALL_ORDER_POINTS.includes(bytes.toString("hex"));
 }
 
+// path-to-regexp 8 expands each optional `{…}` group into 2^n regex alternatives, and the proxy
+// compiles every entry on each request: unbounded, one armed record burns seconds of event-loop CPU.
+export const MAX_ALLOW_ENTRIES = 64;
+export const MAX_ALLOW_PATH_LENGTH = 256;
+export const MAX_OPTIONAL_GROUPS = 2;
+
+const optionalGroups = (tokens: Token[]): number =>
+  tokens.reduce((n, t) => (t.type === "group" ? n + 1 + optionalGroups(t.tokens) : n), 0);
+
+/** Cheap (linear parse, no regex expansion) check that a route pattern stays within the cost bounds. */
+export function isBoundedPattern(path: string): boolean {
+  return (
+    path.length <= MAX_ALLOW_PATH_LENGTH &&
+    compiles(() => {
+      if (optionalGroups(parse(path).tokens) > MAX_OPTIONAL_GROUPS)
+        throw new Error("too many groups");
+    })
+  );
+}
+
 const CommonArmSchema = z.object({
   // base64url-encoded 32-byte Ed25519 public key (JWK `x`)
   hostPublicKey: z
@@ -43,12 +63,14 @@ const CommonArmSchema = z.object({
         path: z
           .string()
           .startsWith("/")
-          .refine((path) => compiles(() => pathToRegexp(path)), {
-            message: "Not a valid route pattern",
+          // bounds first, so pathToRegexp never expands an oversized pattern
+          .refine((path) => isBoundedPattern(path) && compiles(() => pathToRegexp(path)), {
+            message: `Not a valid route pattern (at most ${MAX_ALLOW_PATH_LENGTH} chars and ${MAX_OPTIONAL_GROUPS} optional groups)`,
           }),
       }),
     )
-    .min(1),
+    .min(1)
+    .max(MAX_ALLOW_ENTRIES),
 });
 
 // One variant per vendor: `api` picks the adapter, `auth` is whatever that adapter validates.

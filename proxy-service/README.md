@@ -33,7 +33,8 @@ Keep the private key in the host, send only `hostPublicKey` to the enclave.
 syntax (`path-to-regexp`): `:id` matches one segment, `*rest` the remainder. It is matched against the
 pathname after URL normalization, case-sensitively; the query string is not checked. A pathname with an
 encoded `/`, `\` or `%` (`%2F`, `%5C`, `%25`) is rejected, since a vendor might decode it into segments the
-allowlist never saw.
+allowlist never saw. Limits: at most 64 entries, 256 chars per path and 2 optional `{…}` groups per path
+(path-to-regexp expands each group into 2ⁿ alternatives, compiled on every request).
 
 ```bash
 curl -sS -X POST "$PROXY_URL/arm" \
