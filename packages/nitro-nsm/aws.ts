@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { DecryptCommand, EncryptCommand, KMSClient } from "@aws-sdk/client-kms";
+import { readFileSync, writeFileSync } from "node:fs";
+import { EncryptCommand, KMSClient } from "@aws-sdk/client-kms";
 import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { kmsDecrypt } from "./kms-decrypt.ts";
 
@@ -19,18 +19,8 @@ switch (command) {
     break;
   }
   case "kms-decrypt": {
-    const ciphertext = Buffer.from(a, "base64");
-    // With the NSM addon in the image the plaintext only comes back encrypted to the attestation
-    let plaintext: Uint8Array;
-    if (existsSync(new URL("./nitro-nsm.node", import.meta.url))) {
-      plaintext = await kmsDecrypt(ciphertext);
-    } else {
-      const { Plaintext } = await new KMSClient().send(
-        new DecryptCommand({ CiphertextBlob: ciphertext }),
-      );
-      plaintext = Plaintext as Uint8Array;
-    }
-    console.log(Buffer.from(plaintext).toString("base64"));
+    // Attested: the plaintext only comes back encrypted to this enclave's attestation
+    console.log((await kmsDecrypt(Buffer.from(a, "base64"))).toString("base64"));
     break;
   }
   case "s3-get": {

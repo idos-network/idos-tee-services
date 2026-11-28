@@ -34,10 +34,6 @@ fi
 source "$SCRIPT_DIR/shared/nbd.ash"
 setup_nbd "proxy"
 
-# Generate-once secret (shared/aws.ash), decrypted with attestation into /run/secrets.
-# Master key the armed-record AES-GCM key is derived from (providers/db.ts): 96 random bytes
-generate_once proxy fle_master_key "$AWS_KMS_FLE_ARN" "openssl rand -base64 96 | tr -d '\\n'"
-
 echo "Fetching Caddyfile from S3"
 CADDYFILE=Caddyfile
 s3_get "proxy/$CADDYFILE" "./$CADDYFILE"
@@ -56,7 +52,7 @@ export HOME=/app
 
 # node directly, not `npm start`: s6-supervise signals its direct child, and an
 # npm wrapper would leak the node process on restart and keep holding the port.
-s6_service express 'cd /app/proxy-service && export NODE_ENV=production && export FLE_MASTER_KEY="$(cat /run/secrets/fle_master_key)" && exec node index.ts'
+s6_service express 'cd /app/proxy-service && export NODE_ENV=production && exec node index.ts'
 s6_service caddy   'cd /app && exec caddy run --config /app/Caddyfile --adapter caddyfile'
 s6_service node    'exec node_exporter --no-collector.kernel_hung'
 s6_service vector  'exec vector --config /etc/vector/vector.yaml'
